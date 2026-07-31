@@ -187,10 +187,10 @@ umask 077
   printf 'DNS：              %s\n' "$L2TP_DNS"
   printf 'Web 地址：         http://%s:17890/\n' "$SERVER_IP"
   printf 'Web 管理员：       %s\n' "$ADMIN_USER"
-  if (( ADMIN_PASSWORD_GENERATED )); then
+  if [[ -n "$ADMIN_PASSWORD_OUTPUT" ]]; then
     printf 'Web 管理密码：     %s\n' "$ADMIN_PASSWORD_OUTPUT"
   else
-    echo "Web 管理密码：     由你手动设置（不保存明文）"
+    echo "Web 管理密码：     已存在，安装更新时无法读取明文"
   fi
   echo "信息保存位置：     $SUMMARY_FILE"
   echo "================================================"
