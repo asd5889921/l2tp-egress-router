@@ -169,3 +169,22 @@ def test_web_egress_ids_are_generated_and_bulk_delete(tmp_path):
         assert removed_binding.status_code == 200
         client.post(f"/api/transactions/{removed_binding.json()['transaction']['id']}/confirm", headers=headers)
         assert client.post("/api/egresses/bulk-delete", json={"ids": [generated]}, headers=headers).status_code == 200
+
+
+def test_web_config_export_import_is_validated(tmp_path):
+    app = create_app(settings(tmp_path))
+    with TestClient(app) as client:
+        client.post("/api/initialize", json={"username": "admin", "password": "long-test-password"})
+        csrf = client.post("/api/login", json={"username": "admin", "password": "long-test-password"}).json()["csrf"]
+        headers = {"X-CSRF-Token": csrf}
+        exported = client.get("/api/config/export")
+        assert exported.status_code == 200
+        assert exported.headers["content-disposition"].endswith('l2er-config.json"')
+        backup = exported.json()
+        backup["state"]["egresses"] = []
+        backup["state"]["bindings"] = []
+        imported = client.post("/api/config/import", json={"backup": backup}, headers=headers)
+        assert imported.status_code == 200
+        assert imported.json()["state"]["egresses"] == []
+        client.post(f"/api/transactions/{imported.json()['transaction']['id']}/confirm", headers=headers)
+        assert client.post("/api/config/import", json={"backup": {"state": {"not_state": True}}}, headers=headers).status_code == 422

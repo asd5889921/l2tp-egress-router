@@ -1,31 +1,19 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>L2TP Egress Router</title>
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>L2TP Egress Router</title><link rel="stylesheet" href="/static/styles.css"></head>
 <body>
   <div id="toast" role="status"></div>
   <main>
-    <header><div><h1>L2TP Egress Router</h1><p>现有 L2TP 服务的来源网段分流层</p></div><button id="logout" class="secondary hidden">退出</button></header>
-    <section id="auth" class="panel narrow">
-      <h2 id="auth-title">登录</h2>
-      <form id="auth-form"><label>用户名<input id="username" required autocomplete="username"></label><label>密码<input id="password" type="password" required autocomplete="current-password"></label><button type="submit">继续</button></form>
-    </section>
+    <header><div><h1>L2TP Egress Router</h1><p>按来源网段管理安全的出口与隧道分流</p></div><button id="logout" class="secondary hidden">退出</button></header>
+    <section id="auth" class="panel narrow"><h2 id="auth-title">登录</h2><form id="auth-form"><label>用户名<input id="username" required autocomplete="username"></label><label>密码<input id="password" type="password" required autocomplete="current-password"></label><button type="submit">继续</button></form></section>
     <div id="dashboard" class="hidden">
       <section id="pending" class="warning hidden"><strong>网络变更等待确认</strong><span id="countdown"></span><div><button id="confirm">确认保留</button><button id="rollback" class="danger">立即回滚</button></div></section>
       <nav><button data-tab="connections" class="active">隧道</button><button data-tab="routes">分流</button><button data-tab="system">系统</button></nav>
-      <section id="connections" class="tab panel"><div class="section-title"><h2>在线连接</h2><button data-refresh="connections" class="icon" title="刷新">↻</button></div><div id="connection-list" class="table-wrap"></div></section>
-      <section id="routes" class="tab panel hidden">
-        <div class="section-title"><h2>出口</h2><button id="add-egress">新增出口</button></div><div id="egress-list" class="table-wrap"></div>
-        <div class="section-title"><h2>IP 段绑定</h2><button id="add-binding">新增绑定</button></div><div id="binding-list" class="table-wrap"></div>
-      </section>
-      <section id="system" class="tab panel hidden"><div class="section-title"><h2>服务状态</h2><button data-refresh="system" class="icon" title="刷新">↻</button></div><div id="system-list"></div></section>
+      <section id="connections" class="tab panel"><div class="section-title"><div><h2>在线连接</h2><p class="section-subtitle">仅显示内网协商信息与必要诊断</p></div><button data-refresh="connections" class="secondary icon" title="刷新">↻</button></div><div id="connection-list" class="table-wrap"></div></section>
+      <section id="routes" class="tab panel hidden"><div class="section-title"><h2>出口</h2><button id="add-egress">新增出口</button></div><div id="egress-list" class="table-wrap"></div><div class="section-title"><h2>IP 段绑定</h2><button id="add-binding">新增绑定</button></div><div id="binding-list" class="table-wrap"></div></section>
+      <section id="system" class="tab panel hidden"><div class="section-title"><div><h2>系统状态</h2><p class="section-subtitle">服务健康、备份与迁移</p></div><div class="actions"><button data-refresh="system" class="secondary icon" title="刷新">↻</button><button id="export-config" class="secondary">导出配置</button><button id="import-config">导入配置</button><input id="import-file" type="file" accept="application/json,.json" hidden></div></div><div id="system-list"></div></section>
     </div>
   </main>
   <dialog id="editor"><form id="editor-form"><h2 id="editor-title"></h2><div id="editor-fields"></div><p id="form-error" class="error"></p><footer><button type="button" id="cancel" class="secondary">取消</button><button type="submit">保存并应用</button></footer></form></dialog>
-  <script src="/static/app.js?v=20260731-ui3"></script>
-</body>
-</html>
+  <script src="/static/app.js?v=20260731-ui4"></script>
+</body></html>

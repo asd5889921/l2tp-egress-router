@@ -13,6 +13,8 @@ FastAPI web console.
   the existing LNS process is never reused or restarted.
 - Xray version is pinned to `26.6.27`.
 - PPP reconnect hooks restore source-CIDR routes automatically.
+- The web panel can export/import a validated `l2er-config.json` backup. It contains routing state and egress credentials, but never admin credentials or sessions.
+- For shell-based migration, use `scripts/l2er-config-backup.sh backup <file.tar.gz>` and `restore <file.tar.gz>`; restore creates a timestamped copy of the current state first.
 - Web console supports egress editing, SS URI parsing, bindings, snapshots,
   rollback, service status, and connectivity tests.
 - Connection diagnostics retain only private IPv4 source samples in memory for

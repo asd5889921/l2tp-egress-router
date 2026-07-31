@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from importlib.resources import files
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -34,6 +34,10 @@ class InitialAdmin(BaseModel):
 
 class BulkDeleteRequest(BaseModel):
     ids: list[str]
+
+
+class ImportRequest(BaseModel):
+    backup: dict
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -128,6 +132,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def get_state(_: dict = Depends(session)) -> dict:
         pending = transactions.pending()
         return {"state": store.load().model_dump(), "pending": pending.model_dump() if pending else None}
+
+    @app.get("/api/config/export")
+    async def export_config(_: dict = Depends(session)) -> JSONResponse:
+        state = store.load()
+        payload = {
+            "format": "l2er-config",
+            "version": 1,
+            "exported_at": time.time(),
+            "state": state.model_dump(mode="json"),
+        }
+        return JSONResponse(payload, headers={"Content-Disposition": 'attachment; filename="l2er-config.json"'})
+
+    @app.post("/api/config/import")
+    async def import_config(data: ImportRequest, _: dict = Depends(mutation_session)) -> dict:
+        if transactions.pending():
+            raise HTTPException(409, "请先确认或回滚当前待确认变更")
+        raw = data.backup.get("state", data.backup)
+        if not isinstance(raw, dict) or not {"egresses", "bindings"}.issubset(raw):
+            raise HTTPException(422, "备份必须包含 egresses 和 bindings")
+        try:
+            imported = AppState.model_validate(raw)
+        except ValueError as exc:
+            raise HTTPException(422, f"备份格式无效: {exc}") from exc
+        return apply(imported)
 
     @app.put("/api/egresses/{egress_id}")
     async def put_egress(egress_id: str, egress: Egress, _: dict = Depends(mutation_session)) -> dict:
