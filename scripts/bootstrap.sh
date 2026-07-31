@@ -30,6 +30,7 @@ while true; do
   if [[ "$ADMIN_PASS" != "$ADMIN_PASS_CONFIRM" ]]; then echo "两次密码不一致。" >&2; continue; fi
   break
 done
+ADMIN_PASSWORD_OUTPUT="$ADMIN_PASS"
 
 if [[ -e /etc/xl2tpd/xl2tpd.conf || -e /etc/ppp/options.xl2tpd || -e /etc/ppp/chap-secrets ]]; then
   echo "检测到已有 L2TP/LNS 配置。为避免覆盖现有服务，本脚本停止。" >&2
@@ -162,7 +163,7 @@ umask 077
   printf 'Web 地址：         http://%s:17890/\n' "$SERVER_IP"
   printf 'Web 管理员：       %s\n' "$ADMIN_USER"
   if (( ADMIN_PASSWORD_GENERATED )); then
-    printf 'Web 管理密码：     %s\n' "$ADMIN_PASS"
+    printf 'Web 管理密码：     %s\n' "$ADMIN_PASSWORD_OUTPUT"
   else
     echo "Web 管理密码：     由你手动设置（不保存明文）"
   fi
