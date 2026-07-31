@@ -28,6 +28,7 @@ def run() -> None:
         return
     payload = {
         "up": True,
+        "role": "egress" if args.egress_id.startswith("l2er:") else "ingress",
         "interface": args.interface,
         "username": os.getenv("PEERNAME", os.getenv("PPP_PEERNAME", "unknown")),
         "local_ip": args.local_ip,

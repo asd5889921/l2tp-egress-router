@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .settings import Settings
-from .storage import atomic_write
+from .storage import StateStore, atomic_write
 
 
 @dataclass
@@ -21,11 +21,12 @@ class InterfaceSamples:
 
 
 class SourceDiagnostics:
-    def __init__(self, settings: Settings, window_seconds: int = 300, min_samples: int = 30, concentration: float = 0.9):
+    def __init__(self, settings: Settings, window_seconds: int = 300, min_samples: int = 30, concentration: float = 0.9, max_entries: int = 5000):
         self.settings = settings
         self.window_seconds = window_seconds
         self.min_samples = min_samples
         self.concentration = concentration
+        self.max_entries = max_entries
         self.samples: dict[str, InterfaceSamples] = {}
         self._tasks: dict[str, asyncio.Task] = {}
 
@@ -33,6 +34,8 @@ class SourceDiagnostics:
         ipaddress.ip_address(source)
         bucket = self.samples.setdefault(interface, InterfaceSamples())
         bucket.entries.append((timestamp or time.time(), source))
+        while len(bucket.entries) > self.max_entries:
+            bucket.entries.popleft()
         self._trim(bucket)
 
     def _trim(self, bucket: InterfaceSamples) -> None:
@@ -102,11 +105,18 @@ class PPPMonitor:
 
     def _events(self) -> list[dict]:
         directory = self.settings.run_dir / "ppp"
+        try:
+            egress_ids = {item.id for item in StateStore(self.settings).load().egresses}
+        except (OSError, ValueError):
+            egress_ids = set()
         result = []
         for path in directory.glob("*.json") if directory.exists() else []:
             try:
                 event = json.loads(path.read_text(encoding="utf-8"))
-                if event.get("up"):
+                # Egress PPPs are external transport details; the dashboard
+                # should show only inbound Panabit/LNS connections.
+                is_egress = event.get("role") == "egress" or path.stem in egress_ids
+                if event.get("up") and not is_egress:
                     result.append(event)
             except (OSError, ValueError):
                 continue
