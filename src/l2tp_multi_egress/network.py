@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import subprocess
-import re
 import json
+import re
+import subprocess
 
 from .models import AppState, ProxyType
 from .settings import Settings
-
 
 CHAIN = "L2ER_TPROXY"
 ROUTE_TABLE = 100
@@ -20,24 +19,19 @@ def l2tp_table(egress_id: str, state: AppState) -> int:
 
 def iptables_restore_script(state: AppState) -> str:
     lines = [
-        "*mangle",
-        f":{CHAIN} - [0:0]",
-        f"-F {CHAIN}",
+        "*mangle", f":{CHAIN} - [0:0]", f"-F {CHAIN}",
         f"-A {CHAIN} -p udp --dport 1701 -j RETURN",
-        f"-A {CHAIN} -d 0.0.0.0/8 -j RETURN",
-        f"-A {CHAIN} -d 10.0.0.0/8 -j RETURN",
-        f"-A {CHAIN} -d 100.64.0.0/10 -j RETURN",
-        f"-A {CHAIN} -d 127.0.0.0/8 -j RETURN",
-        f"-A {CHAIN} -d 169.254.0.0/16 -j RETURN",
-        f"-A {CHAIN} -d 172.16.0.0/12 -j RETURN",
-        f"-A {CHAIN} -d 192.168.0.0/16 -j RETURN",
-        f"-A {CHAIN} -d 224.0.0.0/4 -j RETURN",
+        f"-A {CHAIN} -d 0.0.0.0/8 -j RETURN", f"-A {CHAIN} -d 10.0.0.0/8 -j RETURN",
+        f"-A {CHAIN} -d 100.64.0.0/10 -j RETURN", f"-A {CHAIN} -d 127.0.0.0/8 -j RETURN",
+        f"-A {CHAIN} -d 169.254.0.0/16 -j RETURN", f"-A {CHAIN} -d 172.16.0.0/12 -j RETURN",
+        f"-A {CHAIN} -d 192.168.0.0/16 -j RETURN", f"-A {CHAIN} -d 224.0.0.0/4 -j RETURN",
         f"-A {CHAIN} -d 240.0.0.0/4 -j RETURN",
     ]
+    egresses = {e.id: e for e in state.egresses}
     for binding in state.bindings:
         if not binding.enabled:
             continue
-        egress = next((e for e in state.egresses if e.id == binding.egress_id), None)
+        egress = egresses.get(binding.egress_id)
         if egress and egress.type == ProxyType.L2TP:
             lines.append(f"-A {CHAIN} -i ppp+ -s {binding.source_cidr} -j RETURN")
             continue
@@ -59,10 +53,10 @@ class NetworkManager:
             return subprocess.CompletedProcess(args, 0, "dry-run", "")
         return subprocess.run(args, input=stdin, text=True, capture_output=True, timeout=20, check=False)
 
-    def _checked(self, args: list[str], stdin: str | None = None, tolerate_exists: bool = False) -> None:
+    def _checked(self, args: list[str], stdin: str | None = None) -> None:
         result = self._run(args, stdin)
-        if result.returncode and not (tolerate_exists and "File exists" in result.stderr):
-            raise RuntimeError(f"命令失败 {' '.join(args)}: {(result.stderr or result.stdout).strip()}")
+        if result.returncode:
+            raise RuntimeError(f"command failed {' '.join(args)}: {(result.stderr or result.stdout).strip()}")
 
     def ensure_policy_route(self, state: AppState) -> None:
         self._checked(["ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", str(ROUTE_TABLE)])
@@ -80,34 +74,47 @@ class NetworkManager:
             if interface not in interfaces and len(interfaces) == len([e for e in state.egresses if e.type == ProxyType.L2TP]):
                 interface = interfaces[sorted(e.id for e in state.egresses if e.type == ProxyType.L2TP).index(egress.id)]
             if interface in interfaces:
-                self._checked(["ip", "route", "replace", "default", "dev", interface, "table", str(l2tp_table(egress.id, state))])
+                self._checked(["ip", "route", "replace", "default", "via", self._peer_for(interface), "dev", interface, "table", str(l2tp_table(egress.id, state))])
                 for binding in state.bindings:
                     if binding.enabled and binding.egress_id == egress.id:
-                        result = self._run(["ip", "rule", "show"])
-                        needle = f"from {binding.source_cidr} lookup {l2tp_table(egress.id, state)}"
-                        if needle not in result.stdout:
-                            self._checked(["ip", "rule", "add", "from", binding.source_cidr, "table", str(l2tp_table(egress.id, state)), "priority", "29000"])
+                        self._ensure_source_rule(binding.source_cidr, l2tp_table(egress.id, state))
         result = self._run(["ip", "rule", "show"])
-        if result.returncode:
-            raise RuntimeError(f"读取 ip rule 失败: {result.stderr.strip()}")
         if f"fwmark 0x8000/0x8000 lookup {ROUTE_TABLE}" not in result.stdout:
-                self._checked(["ip", "rule", "add", "fwmark", f"{MANAGED_MARK}/{MANAGED_MARK}", "table", str(ROUTE_TABLE), "priority", "30000"])
+            self._checked(["ip", "rule", "add", "fwmark", f"{MANAGED_MARK}/{MANAGED_MARK}", "table", str(ROUTE_TABLE), "priority", "30000"])
+
+    def _peer_for(self, interface: str) -> str:
+        result = self._run(["ip", "-4", "addr", "show", "dev", interface])
+        match = re.search(r"peer (\d+\.\d+\.\d+\.\d+)/", result.stdout)
+        return match.group(1) if match else "0.0.0.0"
+
+    def _ensure_source_rule(self, cidr: str, table: int) -> None:
+        result = self._run(["ip", "rule", "show"])
+        if f"from {cidr} lookup {table}" not in result.stdout:
+            self._checked(["ip", "rule", "add", "from", cidr, "table", str(table), "priority", "28000"])
 
     def ensure_source_routes(self, state: AppState) -> None:
         result = self._run(["ip", "-o", "link", "show"])
         interfaces = re.findall(r"\d+: (ppp\d+):", result.stdout)
         if self.settings.dry_run or not interfaces:
             return
+        l2tp_ids = {e.id for e in state.egresses if e.type == ProxyType.L2TP}
+        runtime = self.settings.run_dir / "ppp"
+        ingress: list[str] = []
+        for path in runtime.glob("*.json") if runtime.exists() else []:
+            if path.stem in l2tp_ids:
+                continue
+            try:
+                item = json.loads(path.read_text(encoding="utf-8"))
+                if item.get("interface") in interfaces:
+                    ingress.append(item["interface"])
+            except (OSError, ValueError):
+                continue
         for binding in state.bindings:
             if not binding.enabled:
                 continue
-            interface = binding.ppp_interface
-            if interface and interface not in interfaces:
-                raise RuntimeError(f"绑定 {binding.id} 指定的 PPP 接口不存在: {interface}")
-            if not interface:
-                if len(interfaces) != 1:
-                    raise RuntimeError(f"检测到多个 PPP 接口 ({', '.join(interfaces)})，绑定 {binding.id} 必须指定 PPP 接口")
-                interface = interfaces[0]
+            interface = binding.ppp_interface or (ingress[0] if ingress else (interfaces[0] if len(interfaces) == 1 else None))
+            if not interface or interface not in interfaces:
+                raise RuntimeError(f"no inbound PPP interface for binding {binding.id}")
             self._checked(["ip", "route", "replace", binding.source_cidr, "dev", interface])
 
     def apply(self, state: AppState) -> None:

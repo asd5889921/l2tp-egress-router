@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 from .models import AppState, Egress, ProxyType
 from .settings import Settings
@@ -43,6 +45,11 @@ class L2TPManager:
 
     def render(self, egresses: list[Egress]) -> str:
         lines = ["[global]", "access control = no", "port = 1701", ""]
+        lines.extend(self.render_lacs(egresses))
+        return "\n".join(lines)
+
+    def render_lacs(self, egresses: list[Egress]) -> list[str]:
+        lines: list[str] = []
         for egress in egresses:
             name = self._safe(egress.id)
             options = self.root / name / "ppp.options"
@@ -57,7 +64,26 @@ class L2TPManager:
                 "length bit = yes",
                 "",
             ])
-        return "\n".join(lines)
+        return lines
+
+    def merge_system_config(self, egresses: list[Egress]) -> Path:
+        system_config = Path("/etc/xl2tpd/xl2tpd.conf")
+        original = system_config.read_text(encoding="utf-8")
+        # xl2tpd's parser does not accept comment marker lines. Remove only
+        # previously managed LAC sections, leaving the original LNS intact.
+        managed_file = self.root / "managed_lac_ids.json"
+        managed_ids = {self._safe(e.id) for e in egresses}
+        try:
+            managed_ids.update(json.loads(managed_file.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            pass
+        for ident in managed_ids:
+            original = re.sub(rf"\n\[lac {re.escape(ident)}\].*?(?=\n\[|\Z)", "\n", original, flags=re.S)
+        block = "\n".join(self.render_lacs(egresses) + [""])
+        atomic_write(self.settings.config_dir / "l2tp" / "xl2tpd.base.conf", original, mode=0o600)
+        atomic_write(system_config, original + block, mode=0o600)
+        atomic_write(managed_file, json.dumps(sorted(self._safe(e.id) for e in egresses)), mode=0o600)
+        return system_config
 
     def write_configs(self, state: AppState):
         self.root.mkdir(parents=True, exist_ok=True)
@@ -91,6 +117,10 @@ class L2TPManager:
         # and disconnect inbound Panabit sessions.
         active = subprocess.run(["systemctl", "is-active", "xl2tpd"], capture_output=True, text=True, check=False)
         if active.returncode == 0 and active.stdout.strip() == "active":
+            self.merge_system_config([e for e in state.egresses if e.type == ProxyType.L2TP])
+            result = subprocess.run(["systemctl", "restart", "xl2tpd"], capture_output=True, text=True, timeout=30, check=False)
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or "failed to restart xl2tpd")
             return
         binary = os.getenv("L2ER_XL2TPD_BINARY", "/usr/sbin/xl2tpd")
         proc = subprocess.Popen([binary, "-D", "-c", str(config)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
