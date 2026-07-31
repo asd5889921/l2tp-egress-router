@@ -4,6 +4,8 @@ set -euo pipefail
 CONFIG_DIR="${L2ER_CONFIG_DIR:-/etc/l2tp-egress-router}"
 STATE_FILE="$CONFIG_DIR/state.json"
 BACKUP_DIR="${L2ER_BACKUP_DIR:-/var/backups/l2tp-egress-router}"
+PYTHON_BIN="${L2ER_PYTHON:-/opt/l2tp-egress-router/.venv/bin/python3}"
+[[ -x "$PYTHON_BIN" ]] || PYTHON_BIN="python3"
 
 usage() { echo "Usage: $0 backup <file.tar.gz> | restore <file.tar.gz>"; exit 2; }
 [[ $# -eq 2 ]] || usage
@@ -24,7 +26,7 @@ case "$command" in
     trap 'rm -rf "$temporary"' EXIT
     tar --extract --gzip --file "$archive" --directory "$temporary"
     [[ -f "$temporary/state.json" ]] || { echo "backup does not contain state.json" >&2; exit 1; }
-    python3 - "$temporary/state.json" <<'PY'
+    "$PYTHON_BIN" - "$temporary/state.json" <<'PY'
 import json, sys
 from pydantic import ValidationError
 from l2tp_multi_egress.models import AppState
