@@ -8,10 +8,16 @@ FastAPI web console.
 ## Current status
 
 - Existing `xl2tpd` configuration is treated as upstream-owned and is not overwritten.
+- Each outbound pure-L2TP egress runs in its own network namespace with a
+  dedicated veth, xl2tpd process, control socket, route table, and state file;
+  the existing LNS process is never reused or restarted.
 - Xray version is pinned to `26.6.27`.
 - PPP reconnect hooks restore source-CIDR routes automatically.
 - Web console supports egress editing, SS URI parsing, bindings, snapshots,
   rollback, service status, and connectivity tests.
+- Connection diagnostics retain only private IPv4 source samples in memory for
+  five minutes (at most 1000 samples per interface). Xray runs at error log
+  level by default, and watchdog errors rotate daily with seven days retained.
 
 ## Continue development
 
