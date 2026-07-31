@@ -209,7 +209,13 @@ class L2TPManager:
         control_path = self._control_path(egress.id)
         config = self.root / self._safe(egress.id) / "xl2tpd.conf"
         binary = os.getenv("L2ER_XL2TPD_BINARY", "/usr/sbin/xl2tpd")
-        process = subprocess.Popen(["ip", "netns", "exec", namespace, binary, "-D", "-c", str(config), "-p", str(pid_path), "-C", str(control_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        log_path = self.settings.log_dir / f"l2tp-{self._safe(egress.id)}.log"
+        if log_path.exists() and log_path.stat().st_size > 5 * 1024 * 1024:
+            rotated = log_path.with_suffix(".log.1")
+            rotated.unlink(missing_ok=True)
+            log_path.replace(rotated)
+        with log_path.open("ab") as log:
+            process = subprocess.Popen(["ip", "netns", "exec", namespace, binary, "-D", "-c", str(config), "-p", str(pid_path), "-C", str(control_path)], stdout=log, stderr=subprocess.STDOUT)
         atomic_write(pid_path, f"{process.pid}\n", mode=0o600)
 
     def apply(self, state: AppState) -> None:
