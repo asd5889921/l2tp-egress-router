@@ -12,6 +12,18 @@ L2TP_INSTALLER_URL="${L2ER_L2TP_INSTALLER_URL:-https://raw.githubusercontent.com
 command -v apt-get >/dev/null || { echo "仅支持 Debian/Ubuntu。" >&2; exit 1; }
 [[ -r /dev/tty && -w /dev/tty ]] || { echo "需要交互式终端。" >&2; exit 1; }
 
+read -r -p "Web 管理员用户名 [admin]: " ADMIN_USER </dev/tty
+ADMIN_USER="${ADMIN_USER:-admin}"
+while true; do
+  read -r -s -p "Web 管理员密码（至少 12 位）: " ADMIN_PASS </dev/tty
+  echo >/dev/tty
+  read -r -s -p "再次输入管理密码: " ADMIN_PASS_CONFIRM </dev/tty
+  echo >/dev/tty
+  if [[ ${#ADMIN_PASS} -lt 12 ]]; then echo "密码至少需要 12 位。" >&2; continue; fi
+  if [[ "$ADMIN_PASS" != "$ADMIN_PASS_CONFIRM" ]]; then echo "两次密码不一致。" >&2; continue; fi
+  break
+done
+
 if [[ -e /etc/xl2tpd/xl2tpd.conf || -e /etc/ppp/options.xl2tpd || -e /etc/ppp/chap-secrets ]]; then
   echo "检测到已有 L2TP/LNS 配置。为避免覆盖现有服务，本脚本停止。" >&2
   echo "请在全新 VPS 执行，或先手动备份并处理已有配置。" >&2
@@ -53,6 +65,15 @@ state = AppState()
 atomic_write(s.state_file, state.model_dump_json(indent=2) + "\n")
 XrayManager(s).write_config(state)
 PY
+ADMIN_USER="$ADMIN_USER" ADMIN_PASS="$ADMIN_PASS" "$APP_DIR/.venv/bin/python" - <<'PY'
+import os
+from l2tp_multi_egress.auth import AuthManager
+from l2tp_multi_egress.settings import Settings
+auth = AuthManager(Settings.from_env())
+if not auth.initialized():
+    auth.initialize(os.environ["ADMIN_USER"], os.environ["ADMIN_PASS"])
+PY
+unset ADMIN_PASS ADMIN_PASS_CONFIRM
 
 cat > /etc/systemd/system/l2er-xray.service <<EOF
 [Unit]
@@ -112,4 +133,5 @@ systemctl enable --now l2er-xray l2er-watchdog l2er-web
 echo
 echo "安装完成。"
 echo "请在 Panabit 中填写新 VPS 公网 IP、UDP 1701、刚才设置的 L2TP 用户名和密码。"
-echo "然后打开 http://$(hostname -I | awk '{print $1}'):17890/，在 Web 分流页面添加源网段。"
+echo "Web 管理员：$ADMIN_USER"
+echo "然后打开 http://$(hostname -I | awk '{print $1}'):17890/，使用刚才设置的管理密码登录。"
