@@ -1,21 +1,37 @@
 from __future__ import annotations
 
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import time
 
 from .settings import Settings
+from .storage import exclusive_lock
 from .transaction import TransactionManager
 
 
 def run() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = Settings.from_env()
+    settings.ensure_dirs()
+    handler = TimedRotatingFileHandler(
+        settings.log_dir / "watchdog-error.log",
+        when="midnight",
+        backupCount=settings.log_retention_days,
+        encoding="utf-8",
+    )
+    logging.basicConfig(level=logging.ERROR, format="%(asctime)s %(levelname)s %(message)s", handlers=[handler])
     manager = TransactionManager(settings)
+    last_l2tp_reconcile = 0.0
     while True:
         try:
+            now = time.time()
+            if now - last_l2tp_reconcile >= 5:
+                with exclusive_lock(settings.lock_file):
+                    if not manager.pending():
+                        manager.l2tp.apply(manager.store.load())
+                last_l2tp_reconcile = now
             pending = manager.pending()
-            if pending and time.time() >= pending.deadline_epoch:
-                logging.warning("transaction %s expired; rolling back", pending.id)
+            if pending and now >= pending.deadline_epoch:
+                logging.error("transaction %s expired; rolling back", pending.id)
                 manager.rollback(pending.id)
         except Exception:
             logging.exception("rollback watchdog iteration failed")

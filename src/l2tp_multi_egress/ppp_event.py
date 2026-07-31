@@ -29,7 +29,13 @@ def run() -> None:
     payload = {
         "up": True,
         "role": "egress" if args.egress_id.startswith("l2er:") else "ingress",
-        "interface": args.interface,
+        # Outbound PPP devices live inside their own namespace. The host-side
+        # veth is the routable interface used by policy routing; retain the
+        # namespace PPP name for status probes and debugging only.
+        "interface": os.getenv("L2ER_HOST_INTERFACE", args.interface),
+        "ppp_interface": args.interface,
+        "namespace": os.getenv("L2ER_NAMESPACE", ""),
+        "gateway_ip": os.getenv("L2ER_GATEWAY_IP", ""),
         "username": os.getenv("PEERNAME", os.getenv("PPP_PEERNAME", "unknown")),
         "local_ip": args.local_ip,
         "peer_ip": args.peer_ip,
@@ -42,17 +48,18 @@ def run() -> None:
         atomic_write(path, json.dumps(payload, ensure_ascii=False) + "\n")
     # ip-up.d runs after the PPP device is ready. Re-apply source routes here
     # so a reconnect never leaves the Xray path without a return route.
-    try:
-        from .network import NetworkManager
-        manager = NetworkManager(settings)
-        state = StateStore(settings).load()
-        manager.ensure_source_routes(state)
-        manager.ensure_policy_route(state)
-        manager.ensure_l2tp_nat(state)
-    except Exception as exc:
-        # Do not fail PPP negotiation because the optional routing layer failed;
-        # leave an actionable message in the journal for the watchdog/operator.
-        print(f"l2er: failed to restore source routes on {args.interface}: {exc}", flush=True)
+    if not args.egress_id.startswith("l2er:"):
+        try:
+            from .network import NetworkManager
+            manager = NetworkManager(settings)
+            state = StateStore(settings).load()
+            manager.ensure_source_routes(state)
+            manager.ensure_policy_route(state)
+            manager.ensure_l2tp_nat(state)
+        except Exception as exc:
+            # Do not fail PPP negotiation because the optional routing layer failed;
+            # leave an actionable message in the journal for the watchdog/operator.
+            print(f"l2er: failed to restore source routes on {args.interface}: {exc}", flush=True)
 
 
 if __name__ == "__main__":

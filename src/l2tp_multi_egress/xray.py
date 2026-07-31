@@ -71,7 +71,7 @@ def make_outbound(binding: Binding, egress: Egress) -> dict:
     }
 
 
-def build_config(state: AppState, api_address: str) -> dict:
+def build_config(state: AppState, api_address: str, loglevel: str = "error") -> dict:
     egresses = {x.id: x for x in state.egresses}
     enabled = [x for x in state.bindings if x.enabled]
     inbounds = [make_inbound(x) for x in enabled]
@@ -82,7 +82,7 @@ def build_config(state: AppState, api_address: str) -> dict:
     ])
     rules = [{"type": "field", "inboundTag": [inbound_tag(x)], "outboundTag": outbound_tag(x)} for x in enabled]
     config: dict = {
-        "log": {"loglevel": "warning"},
+        "log": {"loglevel": loglevel if loglevel in {"error", "warning", "info", "debug", "none"} else "error"},
         "api": {"tag": API_TAG, "listen": api_address, "services": ["HandlerService", "RoutingService", "StatsService"]},
         "stats": {},
         "policy": {"system": {"statsInboundUplink": True, "statsInboundDownlink": True, "statsOutboundUplink": True, "statsOutboundDownlink": True}},
@@ -105,7 +105,7 @@ class XrayManager:
 
     def write_config(self, state: AppState, name: str = "config.json") -> Path:
         path = self.settings.xray_dir / name
-        atomic_write(path, json.dumps(build_config(state, self.settings.xray_api), ensure_ascii=False, indent=2) + "\n")
+        atomic_write(path, json.dumps(build_config(state, self.settings.xray_api, self.settings.xray_log_level), ensure_ascii=False, indent=2) + "\n")
         return path
 
     def _run(self, args: list[str], timeout: int = 20) -> subprocess.CompletedProcess[str]:

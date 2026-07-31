@@ -15,6 +15,10 @@ class Settings:
     listen_host: str
     listen_port: int
     rollback_seconds: int
+    diagnostic_window_seconds: int = 300
+    diagnostic_max_entries: int = 1000
+    xray_log_level: str = "error"
+    log_retention_days: int = 7
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -27,6 +31,10 @@ class Settings:
             listen_host=os.getenv("L2ER_LISTEN_HOST", "127.0.0.1"),
             listen_port=int(os.getenv("L2ER_LISTEN_PORT", "17890")),
             rollback_seconds=int(os.getenv("L2ER_ROLLBACK_SECONDS", "60")),
+            diagnostic_window_seconds=max(60, int(os.getenv("L2ER_DIAGNOSTIC_WINDOW_SECONDS", "300"))),
+            diagnostic_max_entries=max(100, int(os.getenv("L2ER_DIAGNOSTIC_MAX_ENTRIES", "1000"))),
+            xray_log_level=os.getenv("L2ER_XRAY_LOG_LEVEL", "error").lower(),
+            log_retention_days=max(1, int(os.getenv("L2ER_LOG_RETENTION_DAYS", "7"))),
         )
 
     @property
@@ -42,6 +50,10 @@ class Settings:
         return self.config_dir / "xray_config"
 
     @property
+    def log_dir(self) -> Path:
+        return self.config_dir / "logs"
+
+    @property
     def pending_file(self) -> Path:
         return self.run_dir / "pending-transaction.json"
 
@@ -50,5 +62,5 @@ class Settings:
         return self.run_dir / "apply.lock"
 
     def ensure_dirs(self) -> None:
-        for path in (self.config_dir, self.run_dir, self.history_dir, self.xray_dir):
+        for path in (self.config_dir, self.run_dir, self.history_dir, self.xray_dir, self.log_dir):
             path.mkdir(parents=True, exist_ok=True)

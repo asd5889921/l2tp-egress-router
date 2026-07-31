@@ -61,20 +61,36 @@ class NetworkManager:
     def ensure_policy_route(self, state: AppState) -> None:
         self._checked(["ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", str(ROUTE_TABLE)])
         links = self._run(["ip", "-o", "link", "show", "up"])
-        interfaces = sorted(re.findall(r"\d+: (ppp\d+):", links.stdout))
+        interfaces = sorted(re.findall(r"\d+: ([A-Za-z0-9_.-]+):", links.stdout))
+        ppp_interfaces = sorted(re.findall(r"\d+: (ppp\d+):", links.stdout))
         runtime = self.settings.run_dir / "ppp"
         for egress in (e for e in state.egresses if e.type == ProxyType.L2TP):
             interface = None
+            gateway = None
             mapping = runtime / f"{egress.id}.json"
             if mapping.exists():
                 try:
-                    interface = json.loads(mapping.read_text()).get("interface")
+                    item = json.loads(mapping.read_text())
+                    interface = item.get("interface")
+                    gateway = item.get("gateway_ip")
                 except (OSError, ValueError):
                     pass
-            if interface not in interfaces and len(interfaces) == len([e for e in state.egresses if e.type == ProxyType.L2TP]):
-                interface = interfaces[sorted(e.id for e in state.egresses if e.type == ProxyType.L2TP).index(egress.id)]
+            if interface not in interfaces and len(ppp_interfaces) == len([e for e in state.egresses if e.type == ProxyType.L2TP]):
+                interface = ppp_interfaces[sorted(e.id for e in state.egresses if e.type == ProxyType.L2TP).index(egress.id)]
             if interface in interfaces:
-                self._checked(["ip", "route", "replace", "default", "via", self._peer_for(interface), "dev", interface, "table", str(l2tp_table(egress.id, state))])
+                gateway = gateway or self._peer_for(interface)
+                if gateway and gateway != "0.0.0.0":
+                    try:
+                        from .l2tp import L2TPManager
+                        _, _, link_network = L2TPManager.link_addresses(egress.id)
+                        self._checked(["ip", "route", "replace", link_network, "dev", interface, "scope", "link", "table", str(l2tp_table(egress.id, state))])
+                    except (ImportError, ValueError):
+                        pass
+                route = ["ip", "route", "replace", "default"]
+                if gateway and gateway != "0.0.0.0":
+                    route.extend(["via", gateway])
+                route.extend(["dev", interface, "table", str(l2tp_table(egress.id, state))])
+                self._checked(route)
                 for binding in state.bindings:
                     if binding.enabled and binding.egress_id == egress.id:
                         self._ensure_source_rule(binding.source_cidr, l2tp_table(egress.id, state))
@@ -148,9 +164,13 @@ class NetworkManager:
         self.ensure_l2tp_nat(state)
 
     def ensure_l2tp_nat(self, state: AppState) -> None:
-        """Masquerade each direct-L2TP source network on its PPP egress."""
+        """Allow host sources to reach each isolated client veth.
+
+        The actual MASQUERADE happens inside the client's namespace on its
+        PPP device. Host rules only permit the veth hop and its return path.
+        """
         runtime = self.settings.run_dir / "ppp"
-        interfaces = set(re.findall(r"\d+: (ppp\d+):", self._run(["ip", "-o", "link", "show", "up"]).stdout))
+        interfaces = set(re.findall(r"\d+: ([A-Za-z0-9_.-]+):", self._run(["ip", "-o", "link", "show", "up"]).stdout))
         for egress in (e for e in state.egresses if e.type == ProxyType.L2TP):
             try:
                 interface = json.loads((runtime / f"{egress.id}.json").read_text()).get("interface")
@@ -161,9 +181,6 @@ class NetworkManager:
             for binding in state.bindings:
                 if not binding.enabled or binding.egress_id != egress.id:
                     continue
-                nat = ["iptables", "-t", "nat", "-C", "POSTROUTING", "-s", binding.source_cidr, "-o", interface, "-j", "MASQUERADE"]
-                if self._run(nat).returncode:
-                    self._checked(["iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", binding.source_cidr, "-o", interface, "-j", "MASQUERADE"])
                 forward = ["iptables", "-C", "FORWARD", "-s", binding.source_cidr, "-o", interface, "-j", "ACCEPT"]
                 if self._run(forward).returncode:
                     self._checked(["iptables", "-I", "FORWARD", "1", *forward[2:]])
@@ -172,6 +189,6 @@ class NetworkManager:
                     self._checked(["iptables", "-I", "FORWARD", "1", *reverse[2:]])
             if len([e for e in state.egresses if e.type == ProxyType.L2TP]) == 1:
                 for peer in self._ingress_peers():
-                    nat = ["iptables", "-t", "nat", "-C", "POSTROUTING", "-s", f"{peer}/32", "-o", interface, "-j", "MASQUERADE"]
-                    if self._run(nat).returncode:
-                        self._checked(["iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", f"{peer}/32", "-o", interface, "-j", "MASQUERADE"])
+                    forward = ["iptables", "-C", "FORWARD", "-s", f"{peer}/32", "-o", interface, "-j", "ACCEPT"]
+                    if self._run(forward).returncode:
+                        self._checked(["iptables", "-I", "FORWARD", "1", *forward[2:]])

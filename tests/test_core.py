@@ -79,6 +79,19 @@ def test_l2tp_binding_bypasses_xray_tproxy():
     assert "-A L2ER_TPROXY -i ppp+ -s 192.168.50.0/24 -j RETURN" in rules
 
 
+def test_l2tp_runtime_isolated_per_egress(tmp_path):
+    first = Egress(id="jp-one", name="Japan 1", type=ProxyType.L2TP, address="203.0.113.10", port=1701, username="u", password="p")
+    second = Egress(id="us-two", name="US 2", type=ProxyType.L2TP, address="203.0.113.11", port=1701, username="u", password="p")
+    manager = L2TPManager(settings(tmp_path))
+    manager.apply(AppState(egresses=[first, second]))
+    assert manager.namespace_name(first.id) != manager.namespace_name(second.id)
+    assert manager.host_interface(first.id) != manager.host_interface(second.id)
+    assert (tmp_path / "etc" / "l2tp" / "jp-one" / "xl2tpd.conf").is_file()
+    hook = (tmp_path / "etc" / "l2tp" / "jp-one" / "ip-up").read_text()
+    assert f"L2ER_NAMESPACE={manager.namespace_name(first.id)}" in hook
+    assert "systemctl" not in hook
+
+
 def test_nat_diagnostic_requires_peer_concentration(tmp_path):
     diag = SourceDiagnostics(settings(tmp_path), min_samples=10, concentration=0.9)
     for _ in range(9):
@@ -86,6 +99,16 @@ def test_nat_diagnostic_requires_peer_concentration(tmp_path):
     diag.record("ppp0", "192.168.1.2")
     report = diag.report("ppp0", "10.200.0.10")
     assert report["nat_suspected"] is True
+
+
+def test_source_diagnostics_keeps_only_private_ipv4(tmp_path):
+    diag = SourceDiagnostics(settings(tmp_path), min_samples=1, max_entries=3)
+    diag.record("ppp0", "8.8.8.8")
+    diag.record("ppp0", "2001:db8::1")
+    diag.record("ppp0", "192.168.17.100")
+    report = diag.report("ppp0", "192.168.17.100")
+    assert report["sample_count"] == 1
+    assert report["sources"] == {"192.168.17.100": 1}
     assert "NAT模式" in report["warning"]
 
 

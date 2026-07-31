@@ -88,6 +88,7 @@ class TransactionManager:
                 self.xray.restart_with(previous)
             else:
                 self.xray.apply_dynamic(current, previous)
+            self.l2tp.apply(previous)
             self.network.apply(previous)
             self.store.save(previous)
             self.xray.write_config(previous)

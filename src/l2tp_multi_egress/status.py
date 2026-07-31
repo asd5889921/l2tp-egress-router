@@ -51,16 +51,20 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
     if egress.type == ProxyType.L2TP:
         mapping = settings.run_dir / "ppp" / f"{egress.id}.json"
         try:
-            interface = json.loads(mapping.read_text(encoding="utf-8")).get("interface")
+            state = json.loads(mapping.read_text(encoding="utf-8"))
+            interface = state.get("ppp_interface") or state.get("interface")
+            namespace = state.get("namespace")
         except (OSError, ValueError):
             interface = None
+            namespace = None
         if not interface:
             return {"ok": False, "latency_ms": 0, "detail": "L2TP PPP interface is not connected"}
         started = time.perf_counter()
+        command = ["curl", "-4", "--interface", interface, "--max-time", "12", "-sS", "-o", "/dev/null", "-w", "%{http_code} %{time_total}", "https://www.gstatic.com/generate_204"]
+        if namespace:
+            command = ["ip", "netns", "exec", namespace, *command]
         process = await asyncio.create_subprocess_exec(
-            "curl", "-4", "--interface", interface, "--max-time", "12", "-sS",
-            "-o", "/dev/null", "-w", "%{http_code} %{time_total}",
-            "https://www.gstatic.com/generate_204",
+            *command,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await process.communicate()

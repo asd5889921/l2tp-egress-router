@@ -21,17 +21,21 @@ class InterfaceSamples:
 
 
 class SourceDiagnostics:
-    def __init__(self, settings: Settings, window_seconds: int = 300, min_samples: int = 30, concentration: float = 0.9, max_entries: int = 5000):
+    def __init__(self, settings: Settings, window_seconds: int | None = None, min_samples: int = 30, concentration: float = 0.9, max_entries: int | None = None):
         self.settings = settings
-        self.window_seconds = window_seconds
+        self.window_seconds = window_seconds if window_seconds is not None else settings.diagnostic_window_seconds
         self.min_samples = min_samples
         self.concentration = concentration
-        self.max_entries = max_entries
+        self.max_entries = max_entries if max_entries is not None else settings.diagnostic_max_entries
         self.samples: dict[str, InterfaceSamples] = {}
         self._tasks: dict[str, asyncio.Task] = {}
 
     def record(self, interface: str, source: str, timestamp: float | None = None) -> None:
-        ipaddress.ip_address(source)
+        address = ipaddress.ip_address(source)
+        # Public transport addresses add noise and are not useful for the
+        # Panabit source-route diagnosis. Keep only private IPv4 client IPs.
+        if address.version != 4 or not address.is_private:
+            return
         bucket = self.samples.setdefault(interface, InterfaceSamples())
         bucket.entries.append((timestamp or time.time(), source))
         while len(bucket.entries) > self.max_entries:
@@ -69,6 +73,7 @@ class SourceDiagnostics:
         for name in list(self._tasks):
             if name not in desired:
                 self._tasks.pop(name).cancel()
+                self.samples.pop(name, None)
         for name in desired:
             if name not in self._tasks or self._tasks[name].done():
                 self._tasks[name] = asyncio.create_task(self._capture(name), name=f"capture-{name}")
@@ -80,7 +85,13 @@ class SourceDiagnostics:
         # whose frame layout is not the 14-byte Ethernet layout.
         sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(0x0800))
         sock.setblocking(False)
-        sock.bind((interface, 0))
+        try:
+            sock.bind((interface, 0))
+        except OSError:
+            # PPP can disappear between the status scan and this task during
+            # reconnects. This is expected and should not log a traceback.
+            sock.close()
+            return
         loop = asyncio.get_running_loop()
         try:
             while True:
