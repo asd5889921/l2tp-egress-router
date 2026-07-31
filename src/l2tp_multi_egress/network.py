@@ -126,3 +126,28 @@ class NetworkManager:
         check = self._run(["iptables", "-t", "mangle", "-C", "PREROUTING", "-i", "ppp+", "-j", CHAIN])
         if check.returncode:
             self._checked(["iptables", "-t", "mangle", "-I", "PREROUTING", "1", "-i", "ppp+", "-j", CHAIN])
+        self.ensure_l2tp_nat(state)
+
+    def ensure_l2tp_nat(self, state: AppState) -> None:
+        """Masquerade each direct-L2TP source network on its PPP egress."""
+        runtime = self.settings.run_dir / "ppp"
+        interfaces = set(re.findall(r"\d+: (ppp\d+):", self._run(["ip", "-o", "link", "show"]).stdout))
+        for egress in (e for e in state.egresses if e.type == ProxyType.L2TP):
+            try:
+                interface = json.loads((runtime / f"{egress.id}.json").read_text()).get("interface")
+            except (OSError, ValueError):
+                interface = None
+            if interface not in interfaces:
+                continue
+            for binding in state.bindings:
+                if not binding.enabled or binding.egress_id != egress.id:
+                    continue
+                nat = ["iptables", "-t", "nat", "-C", "POSTROUTING", "-s", binding.source_cidr, "-o", interface, "-j", "MASQUERADE"]
+                if self._run(nat).returncode:
+                    self._checked(["iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", binding.source_cidr, "-o", interface, "-j", "MASQUERADE"])
+                forward = ["iptables", "-C", "FORWARD", "-s", binding.source_cidr, "-o", interface, "-j", "ACCEPT"]
+                if self._run(forward).returncode:
+                    self._checked(["iptables", "-I", "FORWARD", "1", *forward[2:]])
+                reverse = ["iptables", "-C", "FORWARD", "-i", interface, "-d", binding.source_cidr, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"]
+                if self._run(reverse).returncode:
+                    self._checked(["iptables", "-I", "FORWARD", "1", *reverse[2:]])

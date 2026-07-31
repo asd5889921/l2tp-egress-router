@@ -47,6 +47,7 @@ def run() -> None:
         state = StateStore(settings).load()
         manager.ensure_source_routes(state)
         manager.ensure_policy_route(state)
+        manager.ensure_l2tp_nat(state)
     except Exception as exc:
         # Do not fail PPP negotiation because the optional routing layer failed;
         # leave an actionable message in the journal for the watchdog/operator.
