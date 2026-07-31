@@ -60,6 +60,7 @@ class NetworkManager:
 
     def ensure_policy_route(self, state: AppState) -> None:
         self._checked(["ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", str(ROUTE_TABLE)])
+        self._remove_legacy_peer_rules(state)
         links = self._run(["ip", "-o", "link", "show", "up"])
         interfaces = sorted(re.findall(r"\d+: ([A-Za-z0-9_.-]+):", links.stdout))
         ppp_interfaces = sorted(re.findall(r"\d+: (ppp\d+):", links.stdout))
@@ -94,12 +95,6 @@ class NetworkManager:
                 for binding in state.bindings:
                     if binding.enabled and binding.egress_id == egress.id:
                         self._ensure_source_rule(binding.source_cidr, l2tp_table(egress.id, state))
-        # Some Panabit modes NAT clients to the PPP peer address. If there is
-        # only one direct L2TP egress, keep that fallback on the same table.
-        l2tps = [e for e in state.egresses if e.type == ProxyType.L2TP]
-        if len(l2tps) == 1:
-            for peer in self._ingress_peers():
-                self._ensure_source_rule(f"{peer}/32", l2tp_table(l2tps[0].id, state))
         result = self._run(["ip", "rule", "show"])
         if f"fwmark 0x8000/0x8000 lookup {ROUTE_TABLE}" not in result.stdout:
             self._checked(["ip", "rule", "add", "fwmark", f"{MANAGED_MARK}/{MANAGED_MARK}", "table", str(ROUTE_TABLE), "priority", "30000"])
@@ -114,18 +109,27 @@ class NetworkManager:
         if f"from {cidr} lookup {table}" not in result.stdout:
             self._checked(["ip", "rule", "add", "from", cidr, "table", str(table), "priority", "28000"])
 
-    def _ingress_peers(self) -> list[str]:
-        peers: list[str] = []
-        runtime = self.settings.run_dir / "ppp"
-        for path in runtime.glob("*.json") if runtime.exists() else []:
-            try:
-                item = json.loads(path.read_text(encoding="utf-8"))
-                peer = item.get("peer_ip")
-                if peer and peer not in peers and item.get("local_ip") != "10.10.111.100":
-                    peers.append(peer)
-            except (OSError, ValueError):
+    def _remove_legacy_peer_rules(self, state: AppState) -> None:
+        """Remove old peer-address fallbacks that can black-hole the LNS.
+
+        Earlier versions routed the LNS peer (for example 10.10.1.100) into
+        an outbound table. When that table was empty, even L2TP keepalive/data
+        traffic could become unreachable. Only remove rules owned by the
+        managed priorities and never remove a current binding CIDR.
+        """
+        tables = {l2tp_table(e.id, state) for e in state.egresses if e.type == ProxyType.L2TP}
+        bindings = {binding.source_cidr for binding in state.bindings if binding.enabled}
+        result = self._run(["ip", "rule", "show"])
+        for line in result.stdout.splitlines():
+            match = re.match(r"(\d+):\s+from\s+(\S+)\s+lookup\s+(\d+)", line.strip())
+            if not match:
                 continue
-        return peers
+            priority, source, table = int(match.group(1)), match.group(2), int(match.group(3))
+            if priority not in {28000, 28001} or table not in tables or source in bindings:
+                continue
+            if "/" not in source:
+                source = f"{source}/32"
+            self._checked(["ip", "rule", "del", "from", source, "table", str(table), "priority", str(priority)])
 
     def ensure_source_routes(self, state: AppState) -> None:
         result = self._run(["ip", "-o", "link", "show", "up"])
