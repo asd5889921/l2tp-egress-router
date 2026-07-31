@@ -82,7 +82,10 @@ else
   git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$APP_DIR"
 fi
 python3 -m venv "$APP_DIR/.venv"
-"$APP_DIR/.venv/bin/pip" install --no-cache-dir "$APP_DIR"
+# The venv is reused during updates.  Without --upgrade/--force-reinstall,
+# pip may keep an already-installed package with the same project version,
+# leaving newly added API routes out of the running service.
+"$APP_DIR/.venv/bin/pip" install --no-cache-dir --upgrade --force-reinstall "$APP_DIR"
 "$APP_DIR/.venv/bin/python" -c 'from l2tp_multi_egress.xray_release import download_and_install; print(download_and_install())'
 
 install -d -m 700 "$CONFIG_DIR" "$RUN_DIR"
