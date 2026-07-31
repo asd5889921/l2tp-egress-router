@@ -65,6 +65,9 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
         process = await asyncio.create_subprocess_exec(str(settings.xray_binary), "run", "-config", str(path), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         try:
             await asyncio.sleep(0.35)
+            if process.returncode is not None:
+                error = (await process.stderr.read()).decode(errors="replace").strip()
+                raise RuntimeError(f"Xray startup failed: {error[-500:] or 'process exited'}")
             ready_at = time.perf_counter()
             reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), 5)
             writer.write(b"\x05\x01\x00")
@@ -72,7 +75,8 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
             if await reader.readexactly(2) != b"\x05\x00":
                 raise RuntimeError("本地测试入口握手失败")
             host = b"www.gstatic.com"
-            writer.write(b"\x05\x01\x00\x03" + bytes([len(host)]) + host + (80).to_bytes(2, "big"))
+            connect_started = time.perf_counter()
+            writer.write(b"\x05\x01\x00\x03" + bytes([len(host)]) + host + (443).to_bytes(2, "big"))
             await writer.drain()
             response = await asyncio.wait_for(reader.readexactly(4), 8)
             if response[1] != 0:
@@ -80,13 +84,10 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
             atyp = response[3]
             length = 4 if atyp == 1 else 16 if atyp == 4 else (await reader.readexactly(1))[0]
             await reader.readexactly(length + 2)
-            writer.write(b"GET /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nConnection: close\r\n\r\n")
-            await writer.drain()
-            line = await asyncio.wait_for(reader.readline(), 8)
             finished_at = time.perf_counter()
             writer.close()
             await writer.wait_closed()
-            ok = line.startswith(b"HTTP/")
+            ok = response[1] == 0
             return {
                 "ok": ok,
                 # Keep latency focused on the real proxy request. Starting a
@@ -94,7 +95,8 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
                 "latency_ms": round((finished_at - ready_at) * 1000),
                 "startup_ms": round((ready_at - started) * 1000),
                 "request_ms": round((finished_at - ready_at) * 1000),
-                "detail": line.decode(errors="replace").strip(),
+                "tcp_connect_ms": round((finished_at - connect_started) * 1000),
+                "detail": "TCP CONNECT www.gstatic.com:443 OK",
             }
         except Exception as exc:
             failed_at = time.perf_counter()
