@@ -175,7 +175,10 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now l2er-xray l2er-watchdog l2er-web
+systemctl enable l2er-xray l2er-watchdog l2er-web
+# --now does not restart an already-running unit.  Updates must restart the
+# processes so they load the freshly installed Python package and static UI.
+systemctl restart l2er-xray l2er-watchdog l2er-web
 SERVER_IP="$(curl --connect-timeout 5 -fsS https://api.ipify.org 2>/dev/null || true)"
 [[ -n "$SERVER_IP" ]] || SERVER_IP="$(hostname -I | awk '{print $1}')"
 SUMMARY_FILE=/root/l2er-install-summary.txt

@@ -205,3 +205,20 @@ def test_web_binding_internal_values_are_automatic(tmp_path):
         assert item["id"].startswith("group-")
         assert item["tproxy_port"] >= 12001
         assert item["mark"] >= 32769
+
+
+def test_management_routes_include_all_mutating_ui_actions(tmp_path):
+    app = create_app(settings(tmp_path))
+    routes = {(route.path, method) for route in app.routes for method in getattr(route, "methods", set())}
+    expected = {
+        ("/api/egresses", "POST"),
+        ("/api/egresses/{egress_id}", "PUT"),
+        ("/api/egresses/{egress_id}", "DELETE"),
+        ("/api/egresses/{egress_id}/test", "POST"),
+        ("/api/bindings", "POST"),
+        ("/api/bindings/{binding_id}", "PUT"),
+        ("/api/bindings/{binding_id}", "DELETE"),
+        ("/api/log-settings", "PUT"),
+        ("/api/config/import", "POST"),
+    }
+    assert expected <= routes
