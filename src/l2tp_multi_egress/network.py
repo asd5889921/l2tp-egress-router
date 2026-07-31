@@ -60,7 +60,7 @@ class NetworkManager:
 
     def ensure_policy_route(self, state: AppState) -> None:
         self._checked(["ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", str(ROUTE_TABLE)])
-        links = self._run(["ip", "-o", "link", "show"])
+        links = self._run(["ip", "-o", "link", "show", "up"])
         interfaces = sorted(re.findall(r"\d+: (ppp\d+):", links.stdout))
         runtime = self.settings.run_dir / "ppp"
         for egress in (e for e in state.egresses if e.type == ProxyType.L2TP):
@@ -112,7 +112,7 @@ class NetworkManager:
         return peers
 
     def ensure_source_routes(self, state: AppState) -> None:
-        result = self._run(["ip", "-o", "link", "show"])
+        result = self._run(["ip", "-o", "link", "show", "up"])
         interfaces = re.findall(r"\d+: (ppp\d+):", result.stdout)
         if self.settings.dry_run or not interfaces:
             return
@@ -133,7 +133,7 @@ class NetworkManager:
                 continue
             interface = binding.ppp_interface or (ingress[0] if ingress else (interfaces[0] if len(interfaces) == 1 else None))
             if not interface or interface not in interfaces:
-                raise RuntimeError(f"no inbound PPP interface for binding {binding.id}")
+                continue
             self._checked(["ip", "route", "replace", binding.source_cidr, "dev", interface])
 
     def apply(self, state: AppState) -> None:
@@ -150,7 +150,7 @@ class NetworkManager:
     def ensure_l2tp_nat(self, state: AppState) -> None:
         """Masquerade each direct-L2TP source network on its PPP egress."""
         runtime = self.settings.run_dir / "ppp"
-        interfaces = set(re.findall(r"\d+: (ppp\d+):", self._run(["ip", "-o", "link", "show"]).stdout))
+        interfaces = set(re.findall(r"\d+: (ppp\d+):", self._run(["ip", "-o", "link", "show", "up"]).stdout))
         for egress in (e for e in state.egresses if e.type == ProxyType.L2TP):
             try:
                 interface = json.loads((runtime / f"{egress.id}.json").read_text()).get("interface")
