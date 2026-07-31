@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ssl
 import socket
 import subprocess
 import tempfile
@@ -84,10 +85,16 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
             atyp = response[3]
             length = 4 if atyp == 1 else 16 if atyp == 4 else (await reader.readexactly(1))[0]
             await reader.readexactly(length + 2)
+            tls_started = time.perf_counter()
+            context = ssl.create_default_context()
+            await writer.start_tls(context, server_hostname="www.gstatic.com")
+            writer.write(b"GET /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nConnection: close\r\n\r\n")
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), 10)
             finished_at = time.perf_counter()
             writer.close()
             await writer.wait_closed()
-            ok = response[1] == 0
+            ok = line.startswith(b"HTTP/")
             return {
                 "ok": ok,
                 # Keep latency focused on the real proxy request. Starting a
@@ -96,7 +103,8 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
                 "startup_ms": round((ready_at - started) * 1000),
                 "request_ms": round((finished_at - ready_at) * 1000),
                 "tcp_connect_ms": round((finished_at - connect_started) * 1000),
-                "detail": "TCP CONNECT www.gstatic.com:443 OK",
+                "tls_http_ms": round((finished_at - tls_started) * 1000),
+                "detail": line.decode(errors="replace").strip(),
             }
         except Exception as exc:
             failed_at = time.perf_counter()
