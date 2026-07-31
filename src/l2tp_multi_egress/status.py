@@ -65,6 +65,7 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
         process = await asyncio.create_subprocess_exec(str(settings.xray_binary), "run", "-config", str(path), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         try:
             await asyncio.sleep(0.35)
+            ready_at = time.perf_counter()
             reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), 5)
             writer.write(b"\x05\x01\x00")
             await writer.drain()
@@ -82,12 +83,28 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
             writer.write(b"GET /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nConnection: close\r\n\r\n")
             await writer.drain()
             line = await asyncio.wait_for(reader.readline(), 8)
+            finished_at = time.perf_counter()
             writer.close()
             await writer.wait_closed()
             ok = line.startswith(b"HTTP/")
-            return {"ok": ok, "latency_ms": round((time.perf_counter() - started) * 1000), "detail": line.decode(errors="replace").strip()}
+            return {
+                "ok": ok,
+                # Keep latency focused on the real proxy request. Starting a
+                # temporary Xray process is reported separately below.
+                "latency_ms": round((finished_at - ready_at) * 1000),
+                "startup_ms": round((ready_at - started) * 1000),
+                "request_ms": round((finished_at - ready_at) * 1000),
+                "detail": line.decode(errors="replace").strip(),
+            }
         except Exception as exc:
-            return {"ok": False, "latency_ms": round((time.perf_counter() - started) * 1000), "detail": str(exc)}
+            failed_at = time.perf_counter()
+            return {
+                "ok": False,
+                "latency_ms": round((failed_at - started) * 1000),
+                "startup_ms": round((failed_at - started) * 1000),
+                "request_ms": None,
+                "detail": str(exc),
+            }
         finally:
             process.terminate()
             try:
