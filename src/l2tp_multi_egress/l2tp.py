@@ -142,7 +142,7 @@ class L2TPManager:
         return namespace in self._run(["ip", "netns", "list"]).stdout.split()
 
     def _host_link_exists(self, interface: str) -> bool:
-        return bool(re.search(rf"\b{re.escape(interface)}:", self._run(["ip", "-o", "link", "show"]).stdout))
+        return bool(re.search(rf"\b{re.escape(interface)}(?:@[^:]+)?:", self._run(["ip", "-o", "link", "show"]).stdout))
 
     def _configure_namespace(self, egress: Egress) -> None:
         namespace = self.namespace_name(egress.id)
@@ -169,9 +169,7 @@ class L2TPManager:
         ):
             if self._run(command, namespace).returncode:
                 add = command.copy()
-                add[2] = "-A" if command[1] != "-t" else add[2]
-                if command[1] == "-t":
-                    add[3] = "-A"
+                add[1 if command[1] != "-t" else 3] = "-A"
                 self._checked(add, namespace)
 
     def _pid_path(self, egress_id: str) -> Path:
