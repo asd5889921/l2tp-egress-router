@@ -134,7 +134,7 @@ def test_web_login_crud_and_confirmation(tmp_path):
         csrf = login.json()["csrf"]
         headers = {"X-CSRF-Token": csrf}
         egress = sample_state().egresses[0].model_dump(mode="json")
-        response = client.put("/api/egresses/hk", json=egress, headers=headers)
+        response = client.put("/api/egresses/hk", json={key: value for key, value in egress.items() if key != "id"}, headers=headers)
         assert response.status_code == 200
         txid = response.json()["transaction"]["id"]
         assert client.post(f"/api/transactions/{txid}/confirm", headers=headers).status_code == 200

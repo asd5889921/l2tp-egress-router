@@ -165,9 +165,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return apply(imported)
 
     @app.put("/api/egresses/{egress_id}")
-    async def put_egress(egress_id: str, egress: Egress, _: dict = Depends(mutation_session)) -> dict:
-        if egress.id != egress_id:
-            raise HTTPException(422, "URL 与出口 ID 不一致")
+    async def put_egress(egress_id: str, data: dict, _: dict = Depends(mutation_session)) -> dict:
+        try:
+            egress = Egress.model_validate({**data, "id": egress_id})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         state = store.load()
         items = [egress if item.id == egress_id else item for item in state.egresses]
         if not any(item.id == egress_id for item in state.egresses):
