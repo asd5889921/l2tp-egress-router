@@ -14,9 +14,16 @@ command -v apt-get >/dev/null || { echo "仅支持 Debian/Ubuntu。" >&2; exit 1
 
 read -r -p "Web 管理员用户名 [admin]: " ADMIN_USER </dev/tty
 ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_PASSWORD_GENERATED=0
 while true; do
-  read -r -s -p "Web 管理员密码（至少 12 位）: " ADMIN_PASS </dev/tty
+  read -r -s -p "Web 管理员密码（直接回车自动生成强密码）: " ADMIN_PASS </dev/tty
   echo >/dev/tty
+  if [[ -z "$ADMIN_PASS" ]]; then
+    ADMIN_PASS="$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n')"
+    ADMIN_PASSWORD_GENERATED=1
+    echo "已自动生成管理密码。"
+    break
+  fi
   read -r -s -p "再次输入管理密码: " ADMIN_PASS_CONFIRM </dev/tty
   echo >/dev/tty
   if [[ ${#ADMIN_PASS} -lt 12 ]]; then echo "密码至少需要 12 位。" >&2; continue; fi
@@ -154,7 +161,11 @@ umask 077
   printf 'DNS：              %s\n' "$L2TP_DNS"
   printf 'Web 地址：         http://%s:17890/\n' "$SERVER_IP"
   printf 'Web 管理员：       %s\n' "$ADMIN_USER"
-  echo "Web 管理密码：     安装时由你设置（不保存明文）"
+  if (( ADMIN_PASSWORD_GENERATED )); then
+    printf 'Web 管理密码：     %s\n' "$ADMIN_PASS"
+  else
+    echo "Web 管理密码：     由你手动设置（不保存明文）"
+  fi
   echo "信息保存位置：     $SUMMARY_FILE"
   echo "================================================"
 } | tee "$SUMMARY_FILE"
