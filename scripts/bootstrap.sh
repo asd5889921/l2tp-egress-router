@@ -7,11 +7,32 @@ APP_DIR="${L2ER_APP_DIR:-/opt/l2tp-egress-router}"
 CONFIG_DIR="${L2ER_CONFIG_DIR:-/etc/l2tp-egress-router}"
 RUN_DIR="${L2ER_RUN_DIR:-/run/l2tp-egress-router}"
 L2TP_INSTALLER_URL="${L2ER_L2TP_INSTALLER_URL:-https://raw.githubusercontent.com/asd5889921/l2tp-vpn-installer/main/bootstrap.sh}"
+UNINSTALL_URL="${L2ER_UNINSTALL_URL:-https://raw.githubusercontent.com/asd5889921/l2tp-egress-router/main/scripts/uninstall.sh}"
 
 [[ "$(id -u)" == 0 ]] || { echo "请使用 root 用户运行。" >&2; exit 1; }
 command -v apt-get >/dev/null || { echo "仅支持 Debian/Ubuntu。" >&2; exit 1; }
 [[ -r /dev/tty && -w /dev/tty ]] || { echo "需要交互式终端。" >&2; exit 1; }
 
+EXISTING=0
+if [[ -e /etc/xl2tpd/xl2tpd.conf || -e /etc/ppp/options.xl2tpd || -e /etc/ppp/chap-secrets || -d "$APP_DIR" || -f /etc/systemd/system/l2er-web.service ]]; then
+  EXISTING=1
+  echo "检测到已有 L2TP 或 l2tp-egress-router 安装。"
+  echo "1) 卸载  2) 安装/更新并保留现有 LNS  3) 取消"
+  read -r -p "请选择 [1/2/3]: " ACTION </dev/tty
+  if [[ "$ACTION" == "1" ]]; then
+    read -r -p "卸载需要输入 REMOVE： " CONFIRM </dev/tty
+    [[ "$CONFIRM" == "REMOVE" ]] || { echo "已取消。"; exit 1; }
+    read -r -p "同时删除 xl2tpd/ppp？输入 PURGE 才删除，否则仅卸载本项目： " PURGE </dev/tty
+    if [[ "$PURGE" == "PURGE" ]]; then curl -fsSL "$UNINSTALL_URL" | bash -s -- --purge-l2tp; else curl -fsSL "$UNINSTALL_URL" | bash; fi
+    exit 0
+  fi
+  [[ "$ACTION" == "2" ]] || { echo "已取消。"; exit 1; }
+fi
+
+if [[ -f "$CONFIG_DIR/auth.json" ]]; then
+  ADMIN_USER="$(python3 -c 'import json; print(json.load(open("/etc/l2tp-egress-router/auth.json"))["username"])' 2>/dev/null || echo admin)"
+  ADMIN_PASS=""; ADMIN_PASSWORD_GENERATED=0; ADMIN_PASSWORD_OUTPUT=""
+else
 read -r -p "Web 管理员用户名 [admin]: " ADMIN_USER </dev/tty
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASSWORD_GENERATED=0
@@ -31,8 +52,9 @@ while true; do
   break
 done
 ADMIN_PASSWORD_OUTPUT="$ADMIN_PASS"
+fi
 
-if [[ -e /etc/xl2tpd/xl2tpd.conf || -e /etc/ppp/options.xl2tpd || -e /etc/ppp/chap-secrets ]]; then
+if (( EXISTING == 0 )) && [[ -e /etc/xl2tpd/xl2tpd.conf || -e /etc/ppp/options.xl2tpd || -e /etc/ppp/chap-secrets ]]; then
   echo "检测到已有 L2TP/LNS 配置。为避免覆盖现有服务，本脚本停止。" >&2
   echo "请在全新 VPS 执行，或先手动备份并处理已有配置。" >&2
   exit 1
@@ -40,7 +62,7 @@ fi
 
 echo "第一步：配置新 VPS 的纯 L2TP 服务端。"
 echo "下面会让你填写 Panabit 将要使用的账号、密码、LNS 地址、地址池、MTU 和 DNS。"
-curl -fsSL "$L2TP_INSTALLER_URL" | bash
+if (( EXISTING == 0 )); then curl -fsSL "$L2TP_INSTALLER_URL" | bash; fi
 
 L2TP_USER="$(awk 'NF >= 4 {gsub(/^"|"$/, "", $1); print $1; exit}' /etc/ppp/chap-secrets)"
 L2TP_PASS="$(awk 'NF >= 4 {gsub(/^"|"$/, "", $3); print $3; exit}' /etc/ppp/chap-secrets)"
@@ -72,12 +94,15 @@ export L2ER_CONFIG_DIR="$CONFIG_DIR" L2ER_RUN_DIR="$RUN_DIR" L2ER_XRAY_BINARY=/u
 "$APP_DIR/.venv/bin/python" - <<'PY'
 from l2tp_multi_egress.models import AppState
 from l2tp_multi_egress.settings import Settings
-from l2tp_multi_egress.storage import atomic_write
+from l2tp_multi_egress.storage import StateStore, atomic_write
 from l2tp_multi_egress.xray import XrayManager
 s = Settings.from_env()
 s.ensure_dirs()
-state = AppState()
-atomic_write(s.state_file, state.model_dump_json(indent=2) + "\n")
+if s.state_file.exists():
+    state = StateStore(s).load()
+else:
+    state = AppState()
+    atomic_write(s.state_file, state.model_dump_json(indent=2) + "\n")
 XrayManager(s).write_config(state)
 PY
 ADMIN_USER="$ADMIN_USER" ADMIN_PASS="$ADMIN_PASS" "$APP_DIR/.venv/bin/python" - <<'PY'
