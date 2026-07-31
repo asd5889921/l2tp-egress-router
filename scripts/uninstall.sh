@@ -34,9 +34,20 @@ if (( PURGE_L2TP )); then
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   backup="/root/l2er-uninstall-backup-$stamp"
   install -d -m 700 "$backup"
+  WAN_IFACE="$(ip route show default 2>/dev/null | awk '/^default/ {print $5; exit}')"
+  LNS_LOCAL_IP="$(awk -F= '/^[[:space:]]*local ip[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' /etc/xl2tpd/xl2tpd.conf 2>/dev/null || true)"
+  L2TP_SUBNET=""
+  if [[ "$LNS_LOCAL_IP" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$ ]]; then L2TP_SUBNET="${BASH_REMATCH[1]}.0/24"; fi
   for path in /etc/xl2tpd/xl2tpd.conf /etc/ppp/options.xl2tpd /etc/ppp/chap-secrets; do
     [[ -f "$path" ]] && cp -a "$path" "$backup/"
   done
+  if [[ -n "$WAN_IFACE" && -n "$L2TP_SUBNET" ]]; then
+    iptables -D INPUT -p udp --dport 1701 -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -s "$L2TP_SUBNET" -o "$WAN_IFACE" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -d "$L2TP_SUBNET" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -s "$L2TP_SUBNET" -o "$WAN_IFACE" -j MASQUERADE 2>/dev/null || true
+    command -v netfilter-persistent >/dev/null && netfilter-persistent save >/dev/null 2>&1 || true
+  fi
   rm -rf /etc/xl2tpd
   rm -f /etc/ppp/options.xl2tpd /etc/ppp/chap-secrets /etc/sysctl.d/99-l2tp-ip-forward.conf
   sysctl --system >/dev/null 2>&1 || true
