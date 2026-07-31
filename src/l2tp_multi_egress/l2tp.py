@@ -175,6 +175,9 @@ class L2TPManager:
     def _pid_path(self, egress_id: str) -> Path:
         return self.runtime_root / f"{self._safe(egress_id)}.pid"
 
+    def _control_path(self, egress_id: str) -> Path:
+        return self.runtime_root / f"{self._safe(egress_id)}.control"
+
     def _running(self, path: Path) -> bool:
         try:
             os.kill(int(path.read_text().strip()), 0)
@@ -189,6 +192,7 @@ class L2TPManager:
         except (OSError, ValueError):
             pass
         pid_path.unlink(missing_ok=True)
+        self._control_path(egress_id).unlink(missing_ok=True)
         if self.settings.dry_run or not remove_namespace:
             return
         namespace = self.namespace_name(egress_id)
@@ -202,9 +206,10 @@ class L2TPManager:
             return
         namespace = self.namespace_name(egress.id)
         pid_path = self._pid_path(egress.id)
+        control_path = self._control_path(egress.id)
         config = self.root / self._safe(egress.id) / "xl2tpd.conf"
         binary = os.getenv("L2ER_XL2TPD_BINARY", "/usr/sbin/xl2tpd")
-        process = subprocess.Popen(["ip", "netns", "exec", namespace, binary, "-D", "-c", str(config), "-p", str(pid_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process = subprocess.Popen(["ip", "netns", "exec", namespace, binary, "-D", "-c", str(config), "-p", str(pid_path), "-C", str(control_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         atomic_write(pid_path, f"{process.pid}\n", mode=0o600)
 
     def apply(self, state: AppState) -> None:
@@ -220,5 +225,6 @@ class L2TPManager:
         for egress in desired.values():
             self._configure_namespace(egress)
             pid_path = self._pid_path(egress.id)
-            if not self._running(pid_path):
+            if not self._running(pid_path) or not self._control_path(egress.id).exists():
+                self._stop(egress.id, remove_namespace=False)
                 self._start(egress)
