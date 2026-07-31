@@ -188,3 +188,20 @@ def test_web_config_export_import_is_validated(tmp_path):
         assert imported.json()["state"]["egresses"] == []
         client.post(f"/api/transactions/{imported.json()['transaction']['id']}/confirm", headers=headers)
         assert client.post("/api/config/import", json={"backup": {"state": {"not_state": True}}}, headers=headers).status_code == 422
+
+
+def test_web_binding_internal_values_are_automatic(tmp_path):
+    app = create_app(settings(tmp_path))
+    with TestClient(app) as client:
+        client.post("/api/initialize", json={"username": "admin", "password": "long-test-password"})
+        csrf = client.post("/api/login", json={"username": "admin", "password": "long-test-password"}).json()["csrf"]
+        headers = {"X-CSRF-Token": csrf}
+        egress = {"name": "socks", "type": "socks", "address": "127.0.0.1", "port": 1080}
+        created = client.post("/api/egresses", json=egress, headers=headers).json()
+        client.post(f"/api/transactions/{created['transaction']['id']}/confirm", headers=headers)
+        binding = client.post("/api/bindings", json={"source_cidr": "192.168.60.0/24", "egress_id": created["state"]["egresses"][0]["id"], "enabled": True}, headers=headers)
+        assert binding.status_code == 200
+        item = binding.json()["state"]["bindings"][0]
+        assert item["id"].startswith("group-")
+        assert item["tproxy_port"] >= 12001
+        assert item["mark"] >= 32769

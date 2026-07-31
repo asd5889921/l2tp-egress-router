@@ -22,8 +22,15 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        config_dir = Path(os.getenv("L2ER_CONFIG_DIR", "/etc/l2tp-egress-router"))
+        preferences: dict = {}
+        try:
+            import json
+            preferences = json.loads((config_dir / "preferences.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            pass
         return cls(
-            config_dir=Path(os.getenv("L2ER_CONFIG_DIR", "/etc/l2tp-egress-router")),
+            config_dir=config_dir,
             run_dir=Path(os.getenv("L2ER_RUN_DIR", "/run/l2tp-egress-router")),
             xray_binary=Path(os.getenv("L2ER_XRAY_BINARY", "/usr/local/bin/xray")),
             xray_api=os.getenv("L2ER_XRAY_API", "127.0.0.1:10085"),
@@ -33,8 +40,8 @@ class Settings:
             rollback_seconds=int(os.getenv("L2ER_ROLLBACK_SECONDS", "60")),
             diagnostic_window_seconds=max(60, int(os.getenv("L2ER_DIAGNOSTIC_WINDOW_SECONDS", "300"))),
             diagnostic_max_entries=max(100, int(os.getenv("L2ER_DIAGNOSTIC_MAX_ENTRIES", "1000"))),
-            xray_log_level=os.getenv("L2ER_XRAY_LOG_LEVEL", "error").lower(),
-            log_retention_days=max(1, int(os.getenv("L2ER_LOG_RETENTION_DAYS", "7"))),
+            xray_log_level=os.getenv("L2ER_XRAY_LOG_LEVEL", str(preferences.get("xray_log_level", "error"))).lower(),
+            log_retention_days=max(0, int(os.getenv("L2ER_LOG_RETENTION_DAYS", str(preferences.get("log_retention_days", 7))))),
         )
 
     @property

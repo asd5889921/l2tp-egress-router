@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 import time
 from collections import defaultdict, deque
@@ -20,6 +21,7 @@ from .ss_uri import parse_ss_uri
 from .status import SystemStatus, test_egress
 from .storage import StateStore
 from .transaction import TransactionManager
+from .xray import XrayManager
 
 
 class SSParseRequest(BaseModel):
@@ -38,6 +40,11 @@ class BulkDeleteRequest(BaseModel):
 
 class ImportRequest(BaseModel):
     backup: dict
+
+
+class LogSettingsRequest(BaseModel):
+    xray_log_level: str
+    log_retention_days: int
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -224,6 +231,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "绑定不存在")
         return apply(state.model_copy(update={"bindings": items}))
 
+    @app.post("/api/bindings")
+    async def create_binding(data: dict, _: dict = Depends(mutation_session)) -> dict:
+        state = store.load()
+        used_ids = {item.id for item in state.bindings}
+        binding_id = f"group-{secrets.token_hex(4)}"
+        while binding_id in used_ids:
+            binding_id = f"group-{secrets.token_hex(4)}"
+        used_ports = {item.tproxy_port for item in state.bindings}
+        used_marks = {item.mark for item in state.bindings}
+        port = next((candidate for candidate in range(12001, 65536) if candidate not in used_ports), None)
+        mark = next((candidate for candidate in range(32769, 65536) if candidate not in used_marks), None)
+        if port is None or mark is None:
+            raise HTTPException(422, "内部端口或 fwmark 已耗尽")
+        try:
+            binding = Binding.model_validate({**data, "id": binding_id, "tproxy_port": port, "mark": mark})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return apply(state.model_copy(update={"bindings": [*state.bindings, binding]}))
+
     @app.post("/api/bindings/bulk-delete")
     async def bulk_delete_bindings(data: BulkDeleteRequest, _: dict = Depends(mutation_session)) -> dict:
         state = store.load()
@@ -280,6 +306,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/system")
     async def system_status(_: dict = Depends(session)) -> dict:
         return services.all()
+
+    @app.get("/api/log-settings")
+    async def get_log_settings(_: dict = Depends(session)) -> dict:
+        return {"xray_log_level": settings.xray_log_level, "log_retention_days": settings.log_retention_days}
+
+    @app.put("/api/log-settings")
+    async def set_log_settings(data: LogSettingsRequest, _: dict = Depends(mutation_session)) -> dict:
+        if data.xray_log_level not in {"error", "warning", "info", "debug", "none"}:
+            raise HTTPException(422, "无效的 Xray 日志级别")
+        if not 0 <= data.log_retention_days <= 30:
+            raise HTTPException(422, "日志保留天数必须为 0-30")
+        settings.config_dir.mkdir(parents=True, exist_ok=True)
+        path = settings.config_dir / "preferences.json"
+        path.write_text(json.dumps(data.model_dump(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        refreshed = Settings.from_env()
+        XrayManager(refreshed).write_config(store.load())
+        return data.model_dump()
 
     @app.post("/api/system/{name}/restart")
     async def restart(name: str, _: dict = Depends(mutation_session)) -> dict:

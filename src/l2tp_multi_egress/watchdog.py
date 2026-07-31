@@ -12,12 +12,7 @@ from .transaction import TransactionManager
 def run() -> None:
     settings = Settings.from_env()
     settings.ensure_dirs()
-    handler = TimedRotatingFileHandler(
-        settings.log_dir / "watchdog-error.log",
-        when="midnight",
-        backupCount=settings.log_retention_days,
-        encoding="utf-8",
-    )
+    handler = TimedRotatingFileHandler(settings.log_dir / "watchdog-error.log", when="midnight", backupCount=settings.log_retention_days, encoding="utf-8") if settings.log_retention_days else logging.NullHandler()
     logging.basicConfig(level=logging.ERROR, format="%(asctime)s %(levelname)s %(message)s", handlers=[handler])
     manager = TransactionManager(settings)
     last_l2tp_reconcile = 0.0
