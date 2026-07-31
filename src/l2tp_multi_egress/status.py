@@ -93,7 +93,12 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
             line = await asyncio.wait_for(reader.readline(), 10)
             finished_at = time.perf_counter()
             writer.close()
-            await writer.wait_closed()
+            try:
+                await asyncio.wait_for(writer.wait_closed(), 1)
+            except asyncio.TimeoutError:
+                # The HTTP response is already received; some proxy servers
+                # keep the TLS close-notify open longer than the probe.
+                pass
             ok = line.startswith(b"HTTP/")
             return {
                 "ok": ok,
