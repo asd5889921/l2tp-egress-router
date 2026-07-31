@@ -52,16 +52,21 @@ def make_outbound(binding: Binding, egress: Egress) -> dict:
         if egress.username:
             server["users"] = [{"user": egress.username, "pass": egress.password or ""}]
         settings, protocol = {"servers": [server]}, "socks"
-    else:
+    elif egress.type == ProxyType.HTTP:
         server = {"address": egress.address, "port": egress.port}
         if egress.username:
             server["users"] = [{"user": egress.username, "pass": egress.password or ""}]
         settings, protocol = {"servers": [server]}, "http"
+    elif egress.type == ProxyType.L2TP:
+        settings, protocol = {"domainStrategy": "UseIPv4"}, "freedom"
+    else:
+        raise ValueError(f"unsupported egress type: {egress.type}")
+    sockopt = {"mark": 0x8000 if egress.type == ProxyType.L2TP else 255}
     return {
         "tag": tag,
         "protocol": protocol,
         "settings": settings,
-        "streamSettings": {"sockopt": {"mark": 255}},
+        "streamSettings": {"sockopt": sockopt},
         "mux": {"enabled": False},
     }
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 import re
 
-from .models import AppState
+from .models import AppState, ProxyType
 from .settings import Settings
 
 
@@ -55,7 +55,13 @@ class NetworkManager:
             raise RuntimeError(f"命令失败 {' '.join(args)}: {(result.stderr or result.stdout).strip()}")
 
     def ensure_policy_route(self, state: AppState) -> None:
-        self._checked(["ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", str(ROUTE_TABLE)])
+        route = ["local", "0.0.0.0/0", "dev", "lo"]
+        if any(e.type == ProxyType.L2TP for e in state.egresses):
+            links = self._run(["ip", "-o", "link", "show"])
+            interfaces = re.findall(r"\d+: (ppp\d+):", links.stdout)
+            if interfaces:
+                route = ["default", "dev", interfaces[0]]
+        self._checked(["ip", "route", "replace", *route, "table", str(ROUTE_TABLE)])
         result = self._run(["ip", "rule", "show"])
         if result.returncode:
             raise RuntimeError(f"读取 ip rule 失败: {result.stderr.strip()}")

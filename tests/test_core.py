@@ -13,6 +13,7 @@ from l2tp_multi_egress.diagnostics import SourceDiagnostics
 from l2tp_multi_egress.main import create_app
 from l2tp_multi_egress.models import AppState, Binding, Egress, ProxyType
 from l2tp_multi_egress.network import iptables_restore_script
+from l2tp_multi_egress.l2tp import L2TPManager
 from l2tp_multi_egress.settings import Settings
 from l2tp_multi_egress.ss_uri import parse_ss_uri
 from l2tp_multi_egress.transaction import TransactionManager
@@ -57,6 +58,18 @@ def test_generated_xray_and_iptables_are_udp_tproxy_only():
     assert "-i ppp+" in rules
     assert "--dport 1701 -j RETURN" in rules
     assert "MASQUERADE" not in rules and "SNAT" not in rules and "REDIRECT" not in rules
+
+
+def test_l2tp_model_and_isolated_client_config(tmp_path):
+    egress = Egress(id="jp-l2tp", name="Japan L2TP", type=ProxyType.L2TP, address="203.0.113.10", port=1701, username="panabit", password="secret")
+    manager = L2TPManager(settings(tmp_path))
+    config = manager.write_configs(AppState(egresses=[egress]))
+    text = config.read_text()
+    assert "[lac jp-l2tp]" in text
+    assert "lns = 203.0.113.10" in text
+    assert "noauth" in (tmp_path / "etc" / "l2tp" / "jp-l2tp" / "ppp.options").read_text()
+    with pytest.raises(ValidationError):
+        Egress(id="bad", name="bad", type=ProxyType.L2TP, address="x", port=1700, username="u", password="p")
 
 
 def test_nat_diagnostic_requires_peer_concentration(tmp_path):

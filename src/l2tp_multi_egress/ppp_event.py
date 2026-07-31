@@ -36,7 +36,10 @@ def run() -> None:
     # so a reconnect never leaves the Xray path without a return route.
     try:
         from .network import NetworkManager
-        NetworkManager(settings).ensure_source_routes(StateStore(settings).load())
+        manager = NetworkManager(settings)
+        state = StateStore(settings).load()
+        manager.ensure_source_routes(state)
+        manager.ensure_policy_route(state)
     except Exception as exc:
         # Do not fail PPP negotiation because the optional routing layer failed;
         # leave an actionable message in the journal for the watchdog/operator.
