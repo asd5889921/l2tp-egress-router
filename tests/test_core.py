@@ -145,3 +145,27 @@ def test_web_login_crud_and_confirmation(tmp_path):
         assert client.post(f"/api/transactions/{txid}/confirm", headers=headers).status_code == 200
         state = client.get("/api/state").json()["state"]
         assert state["bindings"][0]["source_cidr"] == "192.168.1.0/24"
+
+
+def test_web_egress_ids_are_generated_and_bulk_delete(tmp_path):
+    app = create_app(settings(tmp_path))
+    with TestClient(app) as client:
+        client.post("/api/initialize", json={"username": "admin", "password": "long-test-password"})
+        csrf = client.post("/api/login", json={"username": "admin", "password": "long-test-password"}).json()["csrf"]
+        headers = {"X-CSRF-Token": csrf}
+        payload = {"name": "Generated", "type": "socks", "address": "127.0.0.1", "port": 1080}
+        created = client.post("/api/egresses", json={**payload, "id": "client-supplied"}, headers=headers)
+        assert created.status_code == 200
+        generated = created.json()["state"]["egresses"][0]["id"]
+        assert generated.startswith("egress-") and generated != "client-supplied"
+        txid = created.json()["transaction"]["id"]
+        client.post(f"/api/transactions/{txid}/confirm", headers=headers)
+        binding = {"id": "b", "source_cidr": "192.168.50.0/24", "egress_id": generated, "tproxy_port": 12010, "mark": 32780, "enabled": True}
+        response = client.put("/api/bindings/b", json=binding, headers=headers)
+        txid = response.json()["transaction"]["id"]
+        client.post(f"/api/transactions/{txid}/confirm", headers=headers)
+        assert client.post("/api/egresses/bulk-delete", json={"ids": [generated]}, headers=headers).status_code == 409
+        removed_binding = client.post("/api/bindings/bulk-delete", json={"ids": ["b"]}, headers=headers)
+        assert removed_binding.status_code == 200
+        client.post(f"/api/transactions/{removed_binding.json()['transaction']['id']}/confirm", headers=headers)
+        assert client.post("/api/egresses/bulk-delete", json={"ids": [generated]}, headers=headers).status_code == 200

@@ -32,6 +32,10 @@ class InitialAdmin(BaseModel):
     password: str
 
 
+class BulkDeleteRequest(BaseModel):
+    ids: list[str]
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.ensure_dirs()
@@ -135,12 +139,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             items.append(egress)
         return apply(state.model_copy(update={"egresses": items}))
 
+    @app.post("/api/egresses")
+    async def create_egress(data: dict, _: dict = Depends(mutation_session)) -> dict:
+        state = store.load()
+        used = {item.id for item in state.egresses}
+        while True:
+            egress_id = f"egress-{secrets.token_hex(4)}"
+            if egress_id not in used:
+                break
+        payload = {key: value for key, value in data.items() if key != "id"}
+        try:
+            egress = Egress.model_validate({**payload, "id": egress_id})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return apply(state.model_copy(update={"egresses": [*state.egresses, egress]}))
+
     @app.delete("/api/egresses/{egress_id}")
     async def delete_egress(egress_id: str, _: dict = Depends(mutation_session)) -> dict:
         state = store.load()
         if any(item.egress_id == egress_id for item in state.bindings):
             raise HTTPException(409, "该出口仍被 IP 段绑定引用")
         items = [item for item in state.egresses if item.id != egress_id]
+        if len(items) == len(state.egresses):
+            raise HTTPException(404, "出口不存在")
+        return apply(state.model_copy(update={"egresses": items}))
+
+    @app.post("/api/egresses/bulk-delete")
+    async def bulk_delete_egresses(data: BulkDeleteRequest, _: dict = Depends(mutation_session)) -> dict:
+        state = store.load()
+        ids = set(data.ids)
+        if not ids:
+            raise HTTPException(422, "请至少选择一个出口")
+        referenced = {item.egress_id for item in state.bindings if item.egress_id in ids}
+        if referenced:
+            raise HTTPException(409, "所选出口仍被 IP 段绑定，请先删除或改绑")
+        items = [item for item in state.egresses if item.id not in ids]
         if len(items) == len(state.egresses):
             raise HTTPException(404, "出口不存在")
         return apply(state.model_copy(update={"egresses": items}))
@@ -159,6 +192,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def delete_binding(binding_id: str, _: dict = Depends(mutation_session)) -> dict:
         state = store.load()
         items = [item for item in state.bindings if item.id != binding_id]
+        if len(items) == len(state.bindings):
+            raise HTTPException(404, "绑定不存在")
+        return apply(state.model_copy(update={"bindings": items}))
+
+    @app.post("/api/bindings/bulk-delete")
+    async def bulk_delete_bindings(data: BulkDeleteRequest, _: dict = Depends(mutation_session)) -> dict:
+        state = store.load()
+        ids = set(data.ids)
+        if not ids:
+            raise HTTPException(422, "请至少选择一个绑定")
+        items = [item for item in state.bindings if item.id not in ids]
         if len(items) == len(state.bindings):
             raise HTTPException(404, "绑定不存在")
         return apply(state.model_copy(update={"bindings": items}))
