@@ -34,9 +34,11 @@ def run() -> None:
         "peer_ip": args.peer_ip,
         "started_epoch": time.time(),
     }
-    atomic_write(path, json.dumps(payload, ensure_ascii=False) + "\n")
     if args.egress_id.startswith("l2er:"):
         atomic_write(directory / f"{args.egress_id[5:]}.json", json.dumps(payload, ensure_ascii=False) + "\n")
+        path.unlink(missing_ok=True)
+    else:
+        atomic_write(path, json.dumps(payload, ensure_ascii=False) + "\n")
     # ip-up.d runs after the PPP device is ready. Re-apply source routes here
     # so a reconnect never leaves the Xray path without a return route.
     try:
