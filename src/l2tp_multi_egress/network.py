@@ -78,6 +78,12 @@ class NetworkManager:
                 for binding in state.bindings:
                     if binding.enabled and binding.egress_id == egress.id:
                         self._ensure_source_rule(binding.source_cidr, l2tp_table(egress.id, state))
+        # Some Panabit modes NAT clients to the PPP peer address. If there is
+        # only one direct L2TP egress, keep that fallback on the same table.
+        l2tps = [e for e in state.egresses if e.type == ProxyType.L2TP]
+        if len(l2tps) == 1:
+            for peer in self._ingress_peers():
+                self._ensure_source_rule(f"{peer}/32", l2tp_table(l2tps[0].id, state))
         result = self._run(["ip", "rule", "show"])
         if f"fwmark 0x8000/0x8000 lookup {ROUTE_TABLE}" not in result.stdout:
             self._checked(["ip", "rule", "add", "fwmark", f"{MANAGED_MARK}/{MANAGED_MARK}", "table", str(ROUTE_TABLE), "priority", "30000"])
@@ -91,6 +97,19 @@ class NetworkManager:
         result = self._run(["ip", "rule", "show"])
         if f"from {cidr} lookup {table}" not in result.stdout:
             self._checked(["ip", "rule", "add", "from", cidr, "table", str(table), "priority", "28000"])
+
+    def _ingress_peers(self) -> list[str]:
+        peers: list[str] = []
+        runtime = self.settings.run_dir / "ppp"
+        for path in runtime.glob("*.json") if runtime.exists() else []:
+            try:
+                item = json.loads(path.read_text(encoding="utf-8"))
+                peer = item.get("peer_ip")
+                if peer and peer not in peers and item.get("local_ip") != "10.10.111.100":
+                    peers.append(peer)
+            except (OSError, ValueError):
+                continue
+        return peers
 
     def ensure_source_routes(self, state: AppState) -> None:
         result = self._run(["ip", "-o", "link", "show"])
@@ -151,3 +170,8 @@ class NetworkManager:
                 reverse = ["iptables", "-C", "FORWARD", "-i", interface, "-d", binding.source_cidr, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"]
                 if self._run(reverse).returncode:
                     self._checked(["iptables", "-I", "FORWARD", "1", *reverse[2:]])
+            if len([e for e in state.egresses if e.type == ProxyType.L2TP]) == 1:
+                for peer in self._ingress_peers():
+                    nat = ["iptables", "-t", "nat", "-C", "POSTROUTING", "-s", f"{peer}/32", "-o", interface, "-j", "MASQUERADE"]
+                    if self._run(nat).returncode:
+                        self._checked(["iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", f"{peer}/32", "-o", interface, "-j", "MASQUERADE"])
