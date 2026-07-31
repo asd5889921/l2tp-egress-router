@@ -6,9 +6,10 @@ import socket
 import subprocess
 import tempfile
 import time
+import json
 from pathlib import Path
 
-from .models import AppState, Binding, Egress
+from .models import AppState, Binding, Egress, ProxyType
 from .settings import Settings
 from .xray import XrayManager, make_outbound
 
@@ -47,6 +48,27 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
     if settings.dry_run:
         await asyncio.sleep(0.01)
         return {"ok": True, "latency_ms": 10, "detail": "dry-run"}
+    if egress.type == ProxyType.L2TP:
+        mapping = settings.run_dir / "ppp" / f"{egress.id}.json"
+        try:
+            interface = json.loads(mapping.read_text(encoding="utf-8")).get("interface")
+        except (OSError, ValueError):
+            interface = None
+        if not interface:
+            return {"ok": False, "latency_ms": 0, "detail": "L2TP PPP interface is not connected"}
+        started = time.perf_counter()
+        process = await asyncio.create_subprocess_exec(
+            "curl", "-4", "--interface", interface, "--max-time", "12", "-sS",
+            "-o", "/dev/null", "-w", "%{http_code} %{time_total}",
+            "https://www.gstatic.com/generate_204",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        elapsed = round((time.perf_counter() - started) * 1000)
+        parts = stdout.decode(errors="replace").strip().split()
+        ok = process.returncode == 0 and bool(parts) and parts[0] in {"200", "204"}
+        detail = f"HTTP {parts[0]} via {interface}" if parts else (stderr.decode(errors="replace").strip() or "L2TP connectivity test failed")
+        return {"ok": ok, "latency_ms": elapsed, "startup_ms": 0, "request_ms": elapsed, "detail": detail}
     with socket.socket() as reserve:
         reserve.bind(("127.0.0.1", 0))
         port = reserve.getsockname()[1]
@@ -59,7 +81,6 @@ async def test_egress(settings: Settings, egress: Egress) -> dict:
         "outbounds": [outbound],
         "routing": {"rules": [{"type": "field", "inboundTag": ["test-in"], "outboundTag": "tested-egress"}]},
     }
-    import json
     with tempfile.TemporaryDirectory(prefix="l2me-test-") as temporary:
         path = Path(temporary) / "config.json"
         path.write_text(json.dumps(config), encoding="utf-8")
