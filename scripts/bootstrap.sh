@@ -31,7 +31,7 @@ fi
 
 if [[ -f "$CONFIG_DIR/auth.json" ]]; then
   ADMIN_USER="$(python3 -c 'import json; print(json.load(open("/etc/l2tp-egress-router/auth.json"))["username"])' 2>/dev/null || echo admin)"
-  ADMIN_PASS=""; ADMIN_PASSWORD_GENERATED=0; ADMIN_PASSWORD_OUTPUT=""
+  ADMIN_PASS="$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n')"; ADMIN_PASSWORD_GENERATED=1; ADMIN_PASSWORD_OUTPUT="$ADMIN_PASS"
 else
 read -r -p "Web 管理员用户名 [admin]: " ADMIN_USER </dev/tty
 ADMIN_USER="${ADMIN_USER:-admin}"
@@ -110,8 +110,11 @@ import os
 from l2tp_multi_egress.auth import AuthManager
 from l2tp_multi_egress.settings import Settings
 auth = AuthManager(Settings.from_env())
-if not auth.initialized():
-    auth.initialize(os.environ["ADMIN_USER"], os.environ["ADMIN_PASS"])
+if auth.initialized():
+    auth.path.unlink()
+    auth.secret_path.unlink(missing_ok=True)
+    auth = AuthManager(Settings.from_env())
+auth.initialize(os.environ["ADMIN_USER"], os.environ["ADMIN_PASS"])
 PY
 unset ADMIN_PASS ADMIN_PASS_CONFIRM
 
