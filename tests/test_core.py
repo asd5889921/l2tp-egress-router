@@ -211,14 +211,29 @@ def test_management_routes_include_all_mutating_ui_actions(tmp_path):
     app = create_app(settings(tmp_path))
     routes = {(route.path, method) for route in app.routes for method in getattr(route, "methods", set())}
     expected = {
+        ("/api/bootstrap", "GET"),
+        ("/api/initialize", "POST"),
+        ("/api/login", "POST"),
+        ("/api/logout", "POST"),
+        ("/api/state", "GET"),
+        ("/api/config/export", "GET"),
         ("/api/egresses", "POST"),
         ("/api/egresses/{egress_id}", "PUT"),
         ("/api/egresses/{egress_id}", "DELETE"),
         ("/api/egresses/{egress_id}/test", "POST"),
+        ("/api/egresses/bulk-delete", "POST"),
         ("/api/bindings", "POST"),
         ("/api/bindings/{binding_id}", "PUT"),
         ("/api/bindings/{binding_id}", "DELETE"),
-        ("/api/log-settings", "PUT"),
+        ("/api/bindings/bulk-delete", "POST"),
+        ("/api/transactions/{transaction_id}/confirm", "POST"),
+        ("/api/transactions/{transaction_id}/rollback", "POST"),
+        ("/api/connections", "GET"),
+        ("/api/system", "GET"),
+        ("/api/system/{name}/restart", "POST"),
+        ("/api/parse-ss", "POST"),
         ("/api/config/import", "POST"),
+        ("/api/log-settings", "PUT"),
+        ("/api/log-settings", "GET"),
     }
     assert expected <= routes
