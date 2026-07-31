@@ -34,6 +34,13 @@ echo "第一步：配置新 VPS 的纯 L2TP 服务端。"
 echo "下面会让你填写 Panabit 将要使用的账号、密码、LNS 地址、地址池、MTU 和 DNS。"
 curl -fsSL "$L2TP_INSTALLER_URL" | bash
 
+L2TP_USER="$(awk 'NF >= 4 {gsub(/^"|"$/, "", $1); print $1; exit}' /etc/ppp/chap-secrets)"
+L2TP_PASS="$(awk 'NF >= 4 {gsub(/^"|"$/, "", $3); print $3; exit}' /etc/ppp/chap-secrets)"
+LNS_LOCAL_IP="$(awk -F= '/^[[:space:]]*local ip[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' /etc/xl2tpd/xl2tpd.conf)"
+LNS_POOL="$(awk -F= '/^[[:space:]]*ip range[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' /etc/xl2tpd/xl2tpd.conf)"
+L2TP_MTU="$(awk '/^[[:space:]]*mtu[[:space:]]+/{print $2; exit}' /etc/ppp/options.xl2tpd)"
+L2TP_DNS="$(awk '/^[[:space:]]*ms-dns[[:space:]]+/{if (value) value=value ", "; value=value $2} END{print value}' /etc/ppp/options.xl2tpd)"
+
 echo "第二步：安装 l2tp-egress-router。"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -130,8 +137,25 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now l2er-xray l2er-watchdog l2er-web
-echo
-echo "安装完成。"
-echo "请在 Panabit 中填写新 VPS 公网 IP、UDP 1701、刚才设置的 L2TP 用户名和密码。"
-echo "Web 管理员：$ADMIN_USER"
-echo "然后打开 http://$(hostname -I | awk '{print $1}'):17890/，使用刚才设置的管理密码登录。"
+SERVER_IP="$(curl --connect-timeout 5 -fsS https://api.ipify.org 2>/dev/null || true)"
+[[ -n "$SERVER_IP" ]] || SERVER_IP="$(hostname -I | awk '{print $1}')"
+SUMMARY_FILE=/root/l2er-install-summary.txt
+umask 077
+{
+  echo
+  echo "========== L2TP Egress Router 安装信息 =========="
+  printf '服务器地址：       %s\n' "$SERVER_IP"
+  printf '服务器端口：       UDP 1701\n'
+  printf 'VPN 账号：         %s\n' "$L2TP_USER"
+  printf 'VPN 密码：         %s\n' "$L2TP_PASS"
+  printf 'LNS 本地地址：     %s\n' "$LNS_LOCAL_IP"
+  printf '客户端地址池：     %s\n' "$LNS_POOL"
+  printf 'MTU：              %s\n' "$L2TP_MTU"
+  printf 'DNS：              %s\n' "$L2TP_DNS"
+  printf 'Web 地址：         http://%s:17890/\n' "$SERVER_IP"
+  printf 'Web 管理员：       %s\n' "$ADMIN_USER"
+  echo "Web 管理密码：     安装时由你设置（不保存明文）"
+  echo "信息保存位置：     $SUMMARY_FILE"
+  echo "================================================"
+} | tee "$SUMMARY_FILE"
+chmod 600 "$SUMMARY_FILE"
