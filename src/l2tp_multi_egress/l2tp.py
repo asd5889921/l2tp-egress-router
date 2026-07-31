@@ -117,10 +117,8 @@ class L2TPManager:
         # and disconnect inbound Panabit sessions.
         active = subprocess.run(["systemctl", "is-active", "xl2tpd"], capture_output=True, text=True, check=False)
         if active.returncode == 0 and active.stdout.strip() == "active":
-            self.merge_system_config([e for e in state.egresses if e.type == ProxyType.L2TP])
-            result = subprocess.run(["systemctl", "restart", "xl2tpd"], capture_output=True, text=True, timeout=30, check=False)
-            if result.returncode:
-                raise RuntimeError(result.stderr.strip() or "failed to restart xl2tpd")
+            # Never rewrite/restart an existing LNS in-place. A separate
+            # isolated client process/network namespace is required for LACs.
             return
         binary = os.getenv("L2ER_XL2TPD_BINARY", "/usr/sbin/xl2tpd")
         proc = subprocess.Popen([binary, "-D", "-c", str(config)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
