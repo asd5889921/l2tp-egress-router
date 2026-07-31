@@ -34,3 +34,18 @@ $("#fakedns").onchange = async e => { try { await api(`/api/fakedns?enabled=${e.
 async function refreshHistory() { try { const rows = await api("/api/history"); $("#history-list").innerHTML = rows.map(x => `<div class="section-title"><span>修订 ${x.revision}</span><button onclick="restoreHistory('${esc(x.name)}')">恢复</button></div>`).join(""); } catch (_) {} } window.restoreHistory = async name => { try { await api(`/api/history/${encodeURIComponent(name)}/restore`, {method:"POST"}); await refreshState(); } catch(e) { toast(e.message,true); } };
 async function refreshSystem() { try { const d = await api("/api/system"); $("#system-list").innerHTML = `<p>Xray: ${esc(d.xray_version)}</p>` + Object.entries(d.services).map(([n,s]) => `<div class="section-title"><span>${esc(n)} <strong class="${s === "active" ? "ok" : "bad"}">${esc(s)}</strong></span><button onclick="restartService('${n}')">重启</button></div>`).join(""); } catch(e) { toast(e.message,true); } } window.restartService = async name => { try { await api(`/api/system/${name}/restart`, {method:"POST"}); await refreshSystem(); toast("服务已重启"); } catch(e) { toast(e.message,true); } };
 document.querySelectorAll("[data-refresh]").forEach(b => b.onclick = () => b.dataset.refresh === "system" ? refreshSystem() : refreshConnections()); bootstrap().catch(e => toast(e.message,true));
+
+// Protocol-specific editor: L2TP never reuses SS URI or encryption fields.
+window.editEgress = (id = "") => {
+  const x = state.egresses.find(e => e.id === id) || {id:"",name:"",type:"shadowsocks",address:"",port:8388,username:"",password:"",method:"aes-256-gcm",reconnect_delay:5,heartbeat_host1:"1.1.1.1",heartbeat_host2:"8.8.8.8",max_delay_ms:0,dns_proxy:false,mtu:1400};
+  const common = `<${"label"}>类型<select name="type"><option value="shadowsocks">Shadowsocks</option><option value="socks">SOCKS5</option><option value="http">HTTP</option><option value="l2tp">纯 L2TP（无 IPsec）</option></select></label>`;
+  const draw = type => {
+    const l2tp = type === "l2tp";
+    fields.innerHTML = `${field("id","ID",x.id)}${field("name","名称",x.name)}${common}${l2tp ? `${field("address","服务器地址",x.address)}${field("port","UDP 端口",x.port || 1701,"number")}${field("username","VPN 账号",x.username || "")}${field("password","VPN 密码",x.password || "","password")}<fieldset><legend>L2TP 参数</legend>${field("reconnect_delay","重连等待时间",x.reconnect_delay || 5,"number",false)}${field("heartbeat_host1","心跳服务器 1",x.heartbeat_host1 || "1.1.1.1","text",false)}${field("heartbeat_host2","心跳服务器 2",x.heartbeat_host2 || "8.8.8.8","text",false)}${field("max_delay_ms","最大时延（0 不限制）",x.max_delay_ms || 0,"number",false)}<label class="toggle"><input name="dns_proxy" type="checkbox" ${x.dns_proxy ? "checked" : ""}>DNS 代理</label>${field("mtu","MTU",x.mtu || 1400,"number",false)}</fieldset>` : `${field("ss_uri","粘贴 ss:// 链接（输入后自动填充）","","text",false)}${field("address","服务器地址",x.address)}${field("port","端口",x.port,"number")}${field("username","用户名（可选）",x.username || "","text",false)}${field("password","密码（可选）",x.password || "","password",false)}${field("method","SS 加密方式",x.method || "","text",false)}`}`;
+    dialog.querySelector('[name="type"]').value = type;
+    if (!l2tp) dialog.querySelector('[name="ss_uri"]')?.addEventListener("input", autofillSs);
+    dialog.querySelector('[name="type"]').onchange = e => draw(e.target.value);
+  };
+  openEditor(id ? "编辑出口" : "新增出口", "", saveEgress);
+  draw(x.type);
+};
