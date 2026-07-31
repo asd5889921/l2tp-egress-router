@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import re
+import json
 
 from .models import AppState, ProxyType
 from .settings import Settings
@@ -10,6 +11,11 @@ from .settings import Settings
 CHAIN = "L2ER_TPROXY"
 ROUTE_TABLE = 100
 MANAGED_MARK = 0x8000
+
+
+def l2tp_table(egress_id: str, state: AppState) -> int:
+    ids = sorted(e.id for e in state.egresses if e.type == ProxyType.L2TP)
+    return ROUTE_TABLE + 1 + ids.index(egress_id)
 
 
 def iptables_restore_script(state: AppState) -> str:
@@ -30,6 +36,10 @@ def iptables_restore_script(state: AppState) -> str:
     ]
     for binding in state.bindings:
         if not binding.enabled:
+            continue
+        egress = next((e for e in state.egresses if e.id == binding.egress_id), None)
+        if egress and egress.type == ProxyType.L2TP:
+            lines.append(f"-A {CHAIN} -i ppp+ -s {binding.source_cidr} -j RETURN")
             continue
         for protocol in ("tcp", "udp"):
             lines.append(
@@ -55,13 +65,28 @@ class NetworkManager:
             raise RuntimeError(f"命令失败 {' '.join(args)}: {(result.stderr or result.stdout).strip()}")
 
     def ensure_policy_route(self, state: AppState) -> None:
-        route = ["local", "0.0.0.0/0", "dev", "lo"]
-        if any(e.type == ProxyType.L2TP for e in state.egresses):
-            links = self._run(["ip", "-o", "link", "show"])
-            interfaces = re.findall(r"\d+: (ppp\d+):", links.stdout)
-            if interfaces:
-                route = ["default", "dev", interfaces[0]]
-        self._checked(["ip", "route", "replace", *route, "table", str(ROUTE_TABLE)])
+        self._checked(["ip", "route", "replace", "local", "0.0.0.0/0", "dev", "lo", "table", str(ROUTE_TABLE)])
+        links = self._run(["ip", "-o", "link", "show"])
+        interfaces = sorted(re.findall(r"\d+: (ppp\d+):", links.stdout))
+        runtime = self.settings.run_dir / "ppp"
+        for egress in (e for e in state.egresses if e.type == ProxyType.L2TP):
+            interface = None
+            mapping = runtime / f"{egress.id}.json"
+            if mapping.exists():
+                try:
+                    interface = json.loads(mapping.read_text()).get("interface")
+                except (OSError, ValueError):
+                    pass
+            if interface not in interfaces and len(interfaces) == len([e for e in state.egresses if e.type == ProxyType.L2TP]):
+                interface = interfaces[sorted(e.id for e in state.egresses if e.type == ProxyType.L2TP).index(egress.id)]
+            if interface in interfaces:
+                self._checked(["ip", "route", "replace", "default", "dev", interface, "table", str(l2tp_table(egress.id, state))])
+                for binding in state.bindings:
+                    if binding.enabled and binding.egress_id == egress.id:
+                        result = self._run(["ip", "rule", "show"])
+                        needle = f"from {binding.source_cidr} lookup {l2tp_table(egress.id, state)}"
+                        if needle not in result.stdout:
+                            self._checked(["ip", "rule", "add", "from", binding.source_cidr, "table", str(l2tp_table(egress.id, state)), "priority", "29000"])
         result = self._run(["ip", "rule", "show"])
         if result.returncode:
             raise RuntimeError(f"读取 ip rule 失败: {result.stderr.strip()}")

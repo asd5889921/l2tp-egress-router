@@ -72,6 +72,13 @@ def test_l2tp_model_and_isolated_client_config(tmp_path):
         Egress(id="bad", name="bad", type=ProxyType.L2TP, address="x", port=1700, username="u", password="p")
 
 
+def test_l2tp_binding_bypasses_xray_tproxy():
+    egress = Egress(id="l2", name="L2TP", type=ProxyType.L2TP, address="203.0.113.10", port=1701, username="u", password="p")
+    state = AppState(egresses=[egress], bindings=[Binding(id="b", source_cidr="192.168.50.0/24", egress_id="l2", tproxy_port=12010, mark=32780)])
+    rules = iptables_restore_script(state)
+    assert "-A L2ER_TPROXY -i ppp+ -s 192.168.50.0/24 -j RETURN" in rules
+
+
 def test_nat_diagnostic_requires_peer_concentration(tmp_path):
     diag = SourceDiagnostics(settings(tmp_path), min_samples=10, concentration=0.9)
     for _ in range(9):

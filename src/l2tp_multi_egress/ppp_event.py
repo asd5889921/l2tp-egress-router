@@ -15,6 +15,7 @@ def run() -> None:
     parser.add_argument("interface")
     parser.add_argument("local_ip", nargs="?", default="")
     parser.add_argument("peer_ip", nargs="?", default="")
+    parser.add_argument("egress_id", nargs="?", default="")
     args = parser.parse_args()
     settings = Settings.from_env()
     directory = settings.run_dir / "ppp"
@@ -22,6 +23,8 @@ def run() -> None:
     path = directory / f"{args.interface}.json"
     if args.action == "down":
         path.unlink(missing_ok=True)
+        if args.egress_id.startswith("l2er:"):
+            (directory / f"{args.egress_id[5:]}.json").unlink(missing_ok=True)
         return
     payload = {
         "up": True,
@@ -32,6 +35,8 @@ def run() -> None:
         "started_epoch": time.time(),
     }
     atomic_write(path, json.dumps(payload, ensure_ascii=False) + "\n")
+    if args.egress_id.startswith("l2er:"):
+        atomic_write(directory / f"{args.egress_id[5:]}.json", json.dumps(payload, ensure_ascii=False) + "\n")
     # ip-up.d runs after the PPP device is ready. Re-apply source routes here
     # so a reconnect never leaves the Xray path without a return route.
     try:

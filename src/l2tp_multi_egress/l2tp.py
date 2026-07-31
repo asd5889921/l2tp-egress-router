@@ -33,6 +33,7 @@ class L2TPManager:
             f"mru {egress.mtu}",
             f"user {egress.username}",
             f"password {egress.password}",
+            f"ipparam l2er:{self._safe(egress.id)}",
             "persist",
             "ip-up-script /etc/l2tp-egress-router/l2tp/ip-up",
         ]
@@ -60,7 +61,7 @@ class L2TPManager:
 
     def write_configs(self, state: AppState):
         self.root.mkdir(parents=True, exist_ok=True)
-        atomic_write(self.root / "ip-up", "#!/bin/sh\nexec /opt/l2tp-egress-router/.venv/bin/l2er-ppp-event up \"$1\" \"$4\" \"$5\"\n", mode=0o700)
+        atomic_write(self.root / "ip-up", "#!/bin/sh\nexec /opt/l2tp-egress-router/.venv/bin/l2er-ppp-event up \"$1\" \"$4\" \"$5\" \"$6\"\n", mode=0o700)
         l2tps = [e for e in state.egresses if e.type == ProxyType.L2TP]
         for egress in l2tps:
             directory = self.root / self._safe(egress.id)
@@ -84,6 +85,12 @@ class L2TPManager:
         if self.settings.dry_run:
             return
         if not any(e.type == ProxyType.L2TP for e in state.egresses):
+            return
+        # When the host already runs an LNS on UDP/1701, the LACs must share
+        # that xl2tpd process; starting a second daemon would steal port 1701
+        # and disconnect inbound Panabit sessions.
+        active = subprocess.run(["systemctl", "is-active", "xl2tpd"], capture_output=True, text=True, check=False)
+        if active.returncode == 0 and active.stdout.strip() == "active":
             return
         binary = os.getenv("L2ER_XL2TPD_BINARY", "/usr/sbin/xl2tpd")
         proc = subprocess.Popen([binary, "-D", "-c", str(config)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
